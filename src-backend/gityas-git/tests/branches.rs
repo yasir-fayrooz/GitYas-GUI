@@ -237,6 +237,45 @@ fn checkout_leaves_a_locked_directory_behind() {
     assert_eq!(git(tmp.path(), &["status", "--porcelain"]), "?? untracked.txt\n");
 }
 
+/// libgit2 rewrites an executable file on Windows by removing it first, and that removal happens before the locked
+/// directory stops the first attempt. The retry must not take the removed file for a local deletion ("your local
+/// changes would be overwritten" on a clean tree), and a failed checkout must not leave files removed.
+#[cfg(windows)]
+#[test]
+fn checkout_with_a_locked_directory_keeps_files_removed_by_the_first_attempt() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    const FILE_SHARE_WRITE: u32 = 0x2;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    let tmp = TempDir::new().unwrap();
+    let repo = init(tmp.path());
+    let commit_exec = |content: &str, msg: &str| {
+        write(&repo, "a/run.sh", content);
+        git(tmp.path(), &["add", "a/run.sh"]);
+        git(tmp.path(), &["update-index", "--chmod=+x", "a/run.sh"]);
+        git(tmp.path(), &["commit", "-q", "-m", msg]);
+    };
+    commit_file(&repo, "base.txt", "b\n", "base");
+    commit_exec("echo 1\n", "add run");
+    branches::create_branch(&repo, "feature", None, true).unwrap();
+    commit_file(&repo, "locked/one.txt", "1\n", "add locked");
+    commit_exec("echo 2\n", "edit run");
+    assert_eq!(git(tmp.path(), &["status", "--porcelain"]), "");
+
+    let _handle = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(tmp.path().join("locked"))
+        .unwrap();
+    branches::checkout_branch(&repo, "refs/heads/main").unwrap();
+    assert_eq!(repo.head().unwrap().name(), Some("refs/heads/main"));
+    assert_eq!(read(&repo, "a/run.sh"), "echo 1\n");
+    assert!(!tmp.path().join("locked/one.txt").exists());
+    assert_eq!(git(tmp.path(), &["status", "--porcelain"]), "");
+}
+
 #[test]
 fn checkout_branch_and_commit_dirty_tree_rules() {
     let fx = Fixture::new();

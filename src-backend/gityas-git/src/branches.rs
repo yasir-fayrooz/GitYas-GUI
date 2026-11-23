@@ -202,6 +202,7 @@ pub(crate) fn safe_checkout(repo: &Repository, tree_obj: &git2::Object<'_>, acti
     let (mut held_back, untouched) = (BTreeSet::<String>::new(), BTreeSet::<String>::new());
     loop {
         let blocked = RefCell::new(Vec::<PathBuf>::new());
+        let touched = RefCell::new(Vec::<PathBuf>::new());
         let mut cb = git2::build::CheckoutBuilder::new();
         cb.safe();
         if !held_back.is_empty() || !untouched.is_empty() {
@@ -218,11 +219,21 @@ pub(crate) fn safe_checkout(repo: &Repository, tree_obj: &git2::Object<'_>, acti
             }
             true
         });
+        // Paths libgit2 got to before failing: its removals (deleted files, and files it rewrites by removing them
+        // first, like an executable on Windows) all happen before any update.
+        cb.progress(|path, _, _| {
+            if let Some(p) = path {
+                touched.borrow_mut().push(p.to_path_buf());
+            }
+        });
         let result = repo.checkout_tree(tree_obj, Some(&mut cb));
         drop(cb);
         let Err(e) = result else {
             return remove_held_back(repo, &held_back);
         };
+        // A checkout that stops part way (a locked directory) has already removed files: put them back, so the
+        // retry does not take them for local deletions and a failure leaves the working tree as it was.
+        restore_removed(repo, &touched.into_inner())?;
         let blocked = blocked.into_inner();
         if blocked.is_empty()
             && let Some(dir) = locked_dir(repo, &e)
@@ -331,6 +342,30 @@ fn checkout_error(repo: &Repository, tree_obj: &git2::Object<'_>, action: &str, 
     } else {
         Err(git_error(e))
     }
+}
+
+/// Rewrites from the index the tracked files among `paths` that are missing from the working tree. Used after a
+/// failed checkout on the paths it processed: a safe checkout only removes files that match the index, so the index
+/// holds exactly what was there.
+fn restore_removed(repo: &Repository, paths: &[PathBuf]) -> Result<()> {
+    let Some(workdir) = repo.workdir() else {
+        return Ok(());
+    };
+    let mut index = fresh_index(repo)?;
+    let missing: Vec<&PathBuf> = paths
+        .iter()
+        .filter(|p| index.get_path(p, 0).is_some() && std::fs::symlink_metadata(workdir.join(p)).is_err())
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    tracing::debug!(count = missing.len(), "restoring files removed by a failed checkout");
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.force().disable_pathspec_match(true);
+    for p in missing {
+        cb.path(p);
+    }
+    repo.checkout_index(Some(&mut index), Some(&mut cb)).map_err(git_error)
 }
 
 /// The workdir-relative directory (`a/b`) of a libgit2 "could not rmdir" error.
