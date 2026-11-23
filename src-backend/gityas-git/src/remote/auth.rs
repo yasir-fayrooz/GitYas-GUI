@@ -852,12 +852,12 @@ mod tests {
         let user = cb
             .call("ssh://github.com/o/r", None, CredentialType::USERNAME)
             .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(user.credtype() as u32, CredentialType::USERNAME.bits());
+        assert_eq!(i64::from(user.credtype()), i64::from(CredentialType::USERNAME.bits()));
         let mut sent = 0;
         let err = loop {
             match cb.call(SSH, Some("git"), SSH_AUTH) {
                 Ok(cred) => {
-                    assert_eq!(cred.credtype() as u32, CredentialType::SSH_KEY.bits());
+                    assert_eq!(i64::from(cred.credtype()), i64::from(CredentialType::SSH_KEY.bits()));
                     sent += 1;
                     assert!(sent <= MAX_SSH_ATTEMPTS, "callback keeps answering a rejecting remote");
                 }
