@@ -251,7 +251,7 @@ fn push_branch_without_upstream_two_remotes_asks_in_a_dialog() {
         .last()
         .unwrap_or_else(|| panic!("Push button"))
         .click();
-    t.harness.step();
+    t.settle_until("the push to finish", |app| app.remote_ui.push_dialog.is_none());
     t.settle();
     assert_eq!(titles(&mut t), ["Pushed side to fork as renamed and set upstream"]);
     assert!(t.app().remote_ui.push_dialog.is_none());
@@ -337,7 +337,7 @@ fn merge_into_current_fast_forward_signature_and_conflicts() {
     write_file(&repo, "README.md", "main\n");
     commit_all(&repo, "main");
     refresh(&mut t);
-    // A real merge needs a signature: no error toast, the signature dialog is requested (WP15) instead.
+    // A real merge needs a signature: no error toast, the signature dialog is requested instead.
     merge_into_current(t.app(), "refs/heads/clash".into());
     t.settle();
     assert_eq!(titles(&mut t).len(), 1, "{:?}", titles(&mut t));

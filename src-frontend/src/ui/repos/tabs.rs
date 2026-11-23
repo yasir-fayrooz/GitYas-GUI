@@ -1,4 +1,4 @@
-//! Tab bar (reference UI §1): the GitYas label and `+` (open a repository) on the left, then one tab per open
+//! Tab bar: the GitYas label and `+` (open a repository) on the left, then one tab per open
 //! repository: active highlight, click switches, `✕` / middle-click close, drag to reorder, context menu. Tabs keep
 //! their width; when they overflow the bar scrolls sideways (mouse wheel, trackpad, or dragging its scroll bar), and
 //! a newly active tab is scrolled into view.

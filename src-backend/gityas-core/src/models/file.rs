@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Change kind of a file. Every libgit2 delta maps to a variant, so one unusual entry can never abort a
-/// status refresh (bug-log §8.1 #6).
+/// status refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaChange {

@@ -1,4 +1,4 @@
-//! WP4 test helpers: temp repositories, a local bare "origin", and the `git` CLI as a test-only oracle.
+//! Test helpers: temp repositories, a local bare "origin", and the `git` CLI as a test-only oracle.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::{Path, PathBuf};

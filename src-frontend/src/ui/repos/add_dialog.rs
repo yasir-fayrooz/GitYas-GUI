@@ -1,4 +1,4 @@
-//! Add-repository dialog with the Open local / Clone tabs (reference UI §3).
+//! Add-repository dialog with the Open local / Clone tabs.
 
 use std::path::PathBuf;
 

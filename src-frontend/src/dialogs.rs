@@ -1,4 +1,4 @@
-//! WP9: modal dialog frame and the confirmation dialog (reference UI §11, §13).
+//! Modal dialog frame and the confirmation dialog.
 //!
 //! Every dialog in the app uses [`modal`]: title bar with `✕`, fixed width, Esc closes, Enter triggers the primary
 //! button (the caller checks [`enter_pressed`]). At most one confirmation is open at a time
@@ -81,7 +81,7 @@ pub fn buttons(ui: &mut Ui, primary: &str, danger: bool, primary_enabled: bool, 
     (cancel, ok)
 }
 
-/// A pending "are you sure?" (§13). Never use it for safe actions.
+/// A pending "are you sure?". Never use it for safe actions.
 pub struct Confirm {
     pub title: String,
     pub body: String,

@@ -1,4 +1,4 @@
-//! Context bar (shared, WP9): the strip under the tab bar. From the left: the profile switcher (switch, add, rename
+//! Context bar (shared): the strip under the tab bar. From the left: the profile switcher (switch, add, rename
 //! or delete profiles: `ui::profiles`), then the git actions (`git_actions`); the Settings gear sits at the far right
 //! and toggles the drawer. Branches, tags and stashes live in the pinned Branches panel; repositories in the tab bar.
 

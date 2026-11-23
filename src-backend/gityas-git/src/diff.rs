@@ -1,9 +1,9 @@
-//! WP6: structured diff, `get_file_diff(DiffTarget, Delta) -> FileDiff`, built from **one** `git2::Patch`
+//! Structured diff, `get_file_diff(DiffTarget, Delta) -> FileDiff`, built from **one** `git2::Patch`
 //! (replaces the old `git_rs/files.rs::get_commit_file_diff`).
 //!
-//! Everything shown comes from the same patch the hunks come from (bug-log #9):
+//! Everything shown comes from the same patch the hunks come from:
 //! * `hunks` and their `DiffLine`s are the patch's hunks/lines (options from
-//!   [`crate::convert::apply_hunk_diff_options`], shared with WP5 hunk staging);
+//!   [`crate::convert::apply_hunk_diff_options`], shared with hunk staging);
 //! * `old_text` is the old-side blob (the patch's preimage), and `new_text` is **rebuilt by applying the
 //!   patch's hunks to `old_text`**, so it is exactly the postimage libgit2 diffed (after clean filters such as
 //!   `core.autocrlf`), never a separate read of the working tree that could disagree. Every context/deleted line
@@ -18,7 +18,7 @@
 //!   combined). If the path is not there and the stash has an untracked part (third parent, `stash -u`),
 //!   the file is diffed from that tree as an addition.
 //!
-//! `kind` is never guessed silently (bug-log #7): `Binary` (libgit2's detection: NUL bytes or attributes),
+//! `kind` is never guessed silently: `Binary` (libgit2's detection: NUL bytes or attributes),
 //! `TooLarge { bytes }` (either side over [`DiffConfig::max_bytes`], checked **before** loading contents),
 //! `NonUtf8` (`old_text`/`new_text` empty; hunk lines are still present, lossily decoded, so hunk staging keeps
 //! working and the UI can offer "show anyway"). Mode-only changes are `Text` with no hunks and equal sides.
@@ -80,7 +80,7 @@ fn empty_diff(kind: DiffKind) -> FileDiff {
     }
 }
 
-/// Builds the structured diff of one file. `delta` is what the file lists (WP5) produced: `path` is the new
+/// Builds the structured diff of one file. `delta` is what the file lists produced: `path` is the new
 /// path (old path for deletions), `old_path` is set for renames/copies.
 ///
 /// Errors: `NotFound` if the target has no change for that path (e.g. it was reverted since the list was
@@ -334,7 +334,7 @@ fn raw_hunks(patch: &git2::Patch<'_>) -> Result<Vec<RawHunk>> {
                 content: line.content().to_vec(),
             });
         }
-        // The hash contract shared with WP5 (convert::hunk_content_hash): every line of the git2 hunk, in
+        // The hash contract shared with hunk staging (convert::hunk_content_hash): every line of the git2 hunk, in
         // order, as (origin char, raw content bytes incl. newline); EOF-marker lines ('=', '>', '<') included.
         let content_hash = hunk_content_hash(lines.iter().map(|l| (l.origin, l.content.as_slice())));
         hunks.push(RawHunk {

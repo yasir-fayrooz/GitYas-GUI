@@ -1,4 +1,4 @@
-//! WP4: list / create / delete / checkout branches, upstream ahead/behind, create remote branch.
+//! List / create / delete / checkout branches, upstream ahead/behind, create remote branch.
 //!
 //! Commands take full ref names (`refs/heads/x`, `refs/remotes/origin/x`), so remote names containing `/` are
 //! never guessed by splitting on the first slash: libgit2 resolves them from the configured refspecs.

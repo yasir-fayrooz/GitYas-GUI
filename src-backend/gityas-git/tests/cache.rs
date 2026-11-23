@@ -1,8 +1,8 @@
-//! WP5 cache primitives: `ref_tips`, `fingerprint`, `walk_new_commits`, `should_bypass_cache`, and the differential
+//! Cache primitives: `ref_tips`, `fingerprint`, `walk_new_commits`, `should_bypass_cache`, and the differential
 //! test: incremental walks over successive snapshots, unioned and filtered to reachable, equal the live walk.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test crate: helpers outside #[test] fns too
 
-mod wp5_support;
+mod worktree_support;
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,7 +11,7 @@ use gityas_core::Oid;
 use gityas_core::models::{Commit, RefTip, RefsFingerprint};
 use gityas_git::cache::{HEAD_TIP, fingerprint, ref_tips, should_bypass_cache, walk_new_commits, walk_until_known};
 use gityas_git::commits::{get_commits_live, retain_reachable, sort_commits};
-use wp5_support::{TestRepo, file_url, git_ok};
+use worktree_support::{TestRepo, file_url, git_ok};
 
 fn oid(hex: &str) -> Oid {
     Oid::from_hex(hex.trim()).unwrap()
@@ -109,7 +109,7 @@ fn fingerprint_is_order_independent_stable_and_sensitive() {
 
 // ---------------------------------------------------------------- walk_new_commits + differential
 
-/// What the engine (WP8e) will do, with an in-memory "cache".
+/// What the engine will do, with an in-memory "cache".
 #[derive(Default)]
 struct SimCache {
     rows: HashMap<Oid, Commit>,

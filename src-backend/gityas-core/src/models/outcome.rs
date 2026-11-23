@@ -19,8 +19,8 @@ pub struct RemoteFetch {
     pub updated: Vec<RefUpdate>,
 }
 
-/// Result of fetching one or all remotes. A repository without remotes yields an empty summary (bug-log #1:
-/// the old code panicked on `remotes.get(0).unwrap()`).
+/// Result of fetching one or all remotes. A repository without remotes yields an empty summary (the
+/// old code panicked on `remotes.get(0).unwrap()`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FetchSummary {
     pub fetched: Vec<RemoteFetch>,

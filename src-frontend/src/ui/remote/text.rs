@@ -1,5 +1,5 @@
-//! Pure logic of the remote-ops UI (no egui): toast texts per outcome (reference UI §10), banner rows (§1), the
-//! status-bar progress label, the push-target decision (§11) and error classification. Unit-tested below.
+//! Pure logic of the remote-ops UI (no egui): toast texts per outcome, banner rows, the
+//! status-bar progress label, the push-target decision and error classification. Unit-tested below.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

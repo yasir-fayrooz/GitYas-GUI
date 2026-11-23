@@ -1,4 +1,4 @@
-//! Side panels (shared, WP9): the Changes panel pinned on the left (working-tree changes and the commit box, or the
+//! Side panels (shared): the Changes panel pinned on the left (working-tree changes and the commit box, or the
 //! selected commit / stash's details), the Branches panel pinned on the right, and the drawer that slides out on the
 //! far right for the Settings page (opened from the context bar). What each page draws belongs to the screen modules
 //! (`worktree`, `history`, `settings`).

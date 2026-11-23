@@ -1,4 +1,4 @@
-//! Context menus shared by the sidebar and the graph's ref pills (§5): local branch, remote branch, tag.
+//! Context menus shared by the sidebar and the graph's ref pills: local branch, remote branch, tag.
 
 use egui::Ui;
 use gityas_core::models::{Branch, Head, Tag};

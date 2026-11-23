@@ -1,17 +1,17 @@
-//! WP6 structured diff on temp repositories, with `git diff` (test-only) as the oracle for hunk headers,
+//! Structured diff on temp repositories, with `git diff` (test-only) as the oracle for hunk headers,
 //! boundaries and line contents.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test-only helpers (clippy.toml covers #[test] fns only)
 
-mod wp6_common;
+mod diff_support;
 
 use std::path::{Path, PathBuf};
 
+use diff_support::{git, git_ok};
 use gityas_core::GitYasError;
 use gityas_core::diff::{DiffKind, DiffTarget, FileDiff, LineOrigin};
 use gityas_core::models::{Delta, DeltaChange};
 use gityas_git::convert::oid_from_git;
 use gityas_git::diff::{DiffConfig, NO_NEWLINE_MARKER, get_file_diff};
-use wp6_common::{git, git_ok};
 
 struct Repo {
     dir: tempfile::TempDir,
@@ -499,7 +499,7 @@ fn hash_is_computed_from_git2_lines_as_documented() {
     r.commit_all("init");
     r.write("h.txt", "a\nB\nc\n");
     let d = r.diff(wt(false), &delta("h.txt", DeltaChange::Modified));
-    // Recompute independently from a git2 Patch exactly as WP5 will.
+    // Recompute independently from a git2 Patch exactly as hunk staging does.
     let repo = r.open();
     let mut opts = git2::DiffOptions::new();
     gityas_git::convert::apply_hunk_diff_options(&mut opts).pathspec("h.txt");
@@ -592,14 +592,14 @@ fn unicode_content_and_empty_file() {
 
 #[test]
 fn random_edits_match_git_diff() {
-    let mut rng = wp6_common::Rng(0xfeed_face_1234_5678);
+    let mut rng = diff_support::Rng(0xfeed_face_1234_5678);
     let r = Repo::new();
     for round in 0..40 {
-        let base = wp6_common::gen_lines(&mut rng, 30);
-        let mid = wp6_common::mutate(&mut rng, &base);
-        let new = wp6_common::mutate(&mut rng, &mid);
+        let base = diff_support::gen_lines(&mut rng, 30);
+        let mid = diff_support::mutate(&mut rng, &base);
+        let new = diff_support::mutate(&mut rng, &mid);
         let trailing = rng.below(4) != 0;
-        let (old_s, new_s) = (wp6_common::join(&base, "\n", true), wp6_common::join(&new, "\n", trailing));
+        let (old_s, new_s) = (diff_support::join(&base, "\n", true), diff_support::join(&new, "\n", trailing));
         r.write("r.txt", &old_s);
         r.git(&["add", "r.txt"]);
         r.write("r.txt", &new_s);

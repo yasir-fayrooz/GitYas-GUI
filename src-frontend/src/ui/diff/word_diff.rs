@@ -1,4 +1,4 @@
-//! Intra-line (word-level) highlights, in-house (no `similar` crate offline; plan WP13 stretch).
+//! Intra-line (word-level) highlights, in-house (no `similar` crate).
 //!
 //! Each run of deleted lines in a hunk is paired positionally with the following run of added lines (the same
 //! pairing Split mode shows side by side). For each pair the lines are tokenised (identifier runs, whitespace
@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(intra.get(&(0, 1)).map(Vec::as_slice), Some(std::slice::from_ref(&(8..9))));
     }
 
-    /// Benchmark (plan WP13): a 5k-line file with every line changed. `cargo test --release -- --ignored
+    /// Benchmark: a 5k-line file with every line changed. `cargo test --release -- --ignored
     /// word_diff_benchmark --nocapture`.
     #[test]
     #[ignore = "benchmark"]

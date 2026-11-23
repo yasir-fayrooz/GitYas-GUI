@@ -1,4 +1,4 @@
-//! §3.4 #8 performance gate. `criterion` is not available offline, so this is an ignored test that prints timings:
+//! Commit-graph cache performance gate. `criterion` is not available offline, so this is an ignored test that prints timings:
 //!
 //! ```text
 //! cargo test -p gityas-engine --release --offline -- --ignored --nocapture cache_benchmark

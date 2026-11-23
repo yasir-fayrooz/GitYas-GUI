@@ -1,4 +1,4 @@
-//! Active-repository session plumbing shared by every command module (§2.3).
+//! Active-repository session plumbing shared by every command module.
 //!
 //! * **Command lock.** Every command that touches the active repository, and every session switch, runs under
 //!   [`SessionState::command_lock`]. A command therefore always sees one consistent session and cannot race a tab switch.

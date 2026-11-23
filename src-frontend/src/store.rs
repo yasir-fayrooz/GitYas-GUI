@@ -1,7 +1,7 @@
-//! WP9: engine-derived state, updated only by [`Store::apply`] (events) and a few command results.
+//! Engine-derived state, updated only by [`Store::apply`] (events) and a few command results.
 //!
 //! The UI never mutates this optimistically: it calls an engine command and waits for the events. Data is per
-//! *active* repository (D2); switching tabs replaces [`Store::repo`] and the engine re-emits everything.
+//! *active* repository; switching tabs replaces [`Store::repo`] and the engine re-emits everything.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -161,7 +161,7 @@ pub struct Store {
     /// `Engine::start` (or engine construction) failed; shown instead of the UI.
     pub fatal: Option<String>,
     pub repositories: Vec<Repository>,
-    /// Tab order + active tab as persisted by the engine (`open_tabs` / `set_open_tabs`). WP10 keeps it in sync.
+    /// Tab order + active tab as persisted by the engine (`open_tabs` / `set_open_tabs`). The repos UI keeps it in sync.
     pub open_tabs: OpenTabs,
     /// The engine's active repository (`SelectedRepositoryUpdated`).
     pub active: Option<RepoId>,

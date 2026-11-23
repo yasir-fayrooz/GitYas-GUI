@@ -18,7 +18,7 @@ path = "src/main.rs"
 # `cargo packager --release -p gityas-frontend -f <format>` (formats per OS: nsis | app,dmg | deb,appimage) for local
 # packages. Releases use it for the Windows installer only and build the macOS / Linux packages themselves
 # (scripts/release/, docs/releasing.md). The updater installs nsis (per-user, no admin prompt), app and appimage
-# bundles. Windows code-signing settings are added by scripts/release/package-windows.sh. No URL scheme or file associations (plan D7).
+# bundles. Windows code-signing settings are added by scripts/release/package-windows.sh. No URL scheme or file associations.
 [package.metadata.packager]
 product-name = "GitYas"
 identifier = "com.gityas.GitYas"

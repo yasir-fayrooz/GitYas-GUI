@@ -1,5 +1,4 @@
-//! Persisted and shared models. WP1 refines these shapes (serde round-trip tests) without changing the
-//! public names used by other crates unless coordinated with the WP0 owner.
+//! Persisted and shared models (serde round-trip tests keep their shapes stable).
 
 mod branch;
 mod cache;

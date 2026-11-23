@@ -374,7 +374,7 @@ fn create_and_delete_lightweight_and_annotated_tags() {
     t.harness.get_by_label("Annotated tags need your name and email.");
     button(&mut t, "Create tag");
     t.settle();
-    // Integrated flow (WP15): the signature dialog opens on top; nothing is created yet.
+    // Integrated flow: the signature dialog opens on top; nothing is created yet.
     assert!(t.app().history_ui.create_tag.is_some());
     assert!(t.app().settings_ui.signature_dialog_open());
     assert!(t.app().store.repo.as_ref().is_some_and(|r| r.commits.tag("v2").is_none()));

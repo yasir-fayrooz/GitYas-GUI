@@ -1,14 +1,14 @@
-//! WP4: references and tags (local + remote).
+//! References and tags (local + remote).
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: panics are the assertions
 
-mod wp4_support;
+mod repo_support;
 
 use gityas_core::GitYasError;
 use gityas_core::models::{BranchKind, CommitSignature, ReferenceKind};
 use gityas_git::refs;
 use gityas_git::remote::{NoCredentials, RemoteContext};
+use repo_support::*;
 use tempfile::TempDir;
-use wp4_support::*;
 
 fn ctx(creds: &NoCredentials) -> RemoteContext<'_> {
     RemoteContext::new(creds).with_credential_helper(false)

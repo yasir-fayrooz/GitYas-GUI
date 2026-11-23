@@ -1,5 +1,5 @@
-//! WP8b: the repository watcher and the periodic fetch scheduler, both owned by the active session and stopped by
-//! its `CancellationToken` (§2 items 4 and 7).
+//! The repository watcher and the periodic fetch scheduler, both owned by the active session and stopped by
+//! its `CancellationToken`.
 //!
 //! * [`watcher`]: **one** debounced filesystem watcher per session (not four). It watches the minimal set of roots
 //!   covering the working tree, the per-worktree git dir and the common git dir, and classifies every changed path

@@ -401,7 +401,7 @@ impl MergePrefill {
 
 // ---- Confirmations / stash --------------------------------------------------------------------------------------
 
-/// §13 text of "Discard changes…": `(title, body, button)`.
+/// Text of "Discard changes…": `(title, body, button)`.
 pub fn discard_confirm_text(files: &[&Delta]) -> (String, String, String) {
     let untracked = files.iter().filter(|d| d.change == DeltaChange::Untracked).count();
     let tracked = files.len() - untracked;

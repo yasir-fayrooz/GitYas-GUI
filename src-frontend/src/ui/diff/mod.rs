@@ -1,4 +1,4 @@
-//! WP13 — diff & file viewer (reference UI §8, plan WP13): Hunk / Inline / Split from one `FileDiff`.
+//! Diff & file viewer: Hunk / Inline / Split from one `FileDiff`.
 //!
 //! * [`diff_model`]: pure `FileDiff` + mode → rows (unit-tested).
 //! * [`word_diff`]: in-house intra-line highlights, computed off the UI thread when a diff loads (with the
@@ -332,7 +332,7 @@ impl DiffTab {
 
 // ---- Cross-module API --------------------------------------------------------------------------------------
 
-/// Shows `request` in the centre (file lists in WP11 / WP12 call this).
+/// Shows `request` in the centre (the history and working-tree file lists call this).
 pub fn open(app: &mut GitYasApp, request: DiffRequest) {
     if let Some(tab) = app.tab_mut() {
         tab.center = Center::Diff(request);

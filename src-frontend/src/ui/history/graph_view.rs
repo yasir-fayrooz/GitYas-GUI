@@ -1,4 +1,4 @@
-//! §4 Commit graph (centre), drawn as a timeline: a toolbar (title, commit count, search), then virtualised two-line
+//! Commit graph (centre), drawn as a timeline: a toolbar (title, commit count, search), then virtualised two-line
 //! commit cards (WIP card, commits, shallow notice) with the lanes on their left, ref chips inline before the
 //! message, chip and commit menus, ↑/↓ selection and Cmd+F search highlight.
 
@@ -134,7 +134,7 @@ struct RowCtx<'a> {
 pub(super) fn show(ui: &mut Ui, app: &mut GitYasApp) -> Vec<Intent> {
     let mut out = Vec::new();
     let p = theme::pal(ui);
-    // A pending tab switch (WP10) shows "Opening <name>…" instead of the previous repository's history.
+    // A pending tab switch shows "Opening <name>…" instead of the previous repository's history.
     let opening = crate::ui::repos::opening_label(app);
     let GitYasApp { store, tabs, .. } = app;
     let (Some(repo), Some(active)) = (store.repo.as_ref(), store.active.clone()) else {

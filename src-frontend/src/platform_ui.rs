@@ -1,4 +1,4 @@
-//! WP9: native dialogs (`rfd`) and OS integration used by the screens.
+//! Native dialogs (`rfd`) and OS integration used by the screens.
 
 use std::path::{Path, PathBuf};
 

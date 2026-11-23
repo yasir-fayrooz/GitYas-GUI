@@ -1,7 +1,7 @@
-//! WP4: merge (up-to-date / fast-forward / merge commit / conflicts) and abort merge.
+//! Merge (up-to-date / fast-forward / merge commit / conflicts) and abort merge.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: panics are the assertions
 
-mod wp4_support;
+mod repo_support;
 
 use std::path::PathBuf;
 
@@ -9,8 +9,8 @@ use gityas_core::GitYasError;
 use gityas_git::branches;
 use gityas_git::remote::{MergeOutcome, abort_merge, merge_branch};
 use gityas_git::repository::{self, RepoState};
+use repo_support::*;
 use tempfile::TempDir;
-use wp4_support::*;
 
 /// main: a.txt=one. feature (from main): b.txt added. main then: c.txt added (so the merge is non-trivial).
 fn diverged() -> (TempDir, git2::Repository) {

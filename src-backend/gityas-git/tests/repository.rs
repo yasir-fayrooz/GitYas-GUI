@@ -1,15 +1,15 @@
-//! WP4: repository open / init / clone / state queries / remotes.
+//! Repository open / init / clone / state queries / remotes.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: panics are the assertions
 
-mod wp4_support;
+mod repo_support;
 
 use std::sync::atomic::AtomicBool;
 
 use gityas_core::{GitYasError, Provider};
 use gityas_git::remote::{NoCredentials, RemoteContext};
 use gityas_git::repository::{self, RepoState};
+use repo_support::*;
 use tempfile::TempDir;
-use wp4_support::*;
 
 #[test]
 fn open_rejects_non_repo_and_discover_searches_up() {

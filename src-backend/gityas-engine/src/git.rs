@@ -1,4 +1,4 @@
-//! WP8c: git command facade. Thin async wrappers over `gityas-git` (no git2 logic of its own): run under
+//! Git command facade. Thin async wrappers over `gityas-git` (no git2 logic of its own): run under
 //! [`Engine::with_repo`], then [`crate::refresh::refresh_blocking`] what the command changed. Remote operations
 //! register with the session's remote-op registry (cancel) and report `AppEvent::RemoteProgress`.
 //!
@@ -172,7 +172,7 @@ impl Engine {
         .await
     }
 
-    // ---- Branches & remotes (WP8c) ---------------------------------------------------------------------
+    // ---- Branches & remotes ----------------------------------------------------------------------------------------
 
     pub async fn branches(&self, kind: BranchKind) -> Result<Vec<Branch>> {
         self.with_repo(move |_, _, repo| branches::list_branches(repo, Some(kind))).await
@@ -276,7 +276,7 @@ impl Engine {
         .await
     }
 
-    // ---- Remote operations (WP8c) ----------------------------------------------------------------------
+    // ---- Remote operations -----------------------------------------------------------------------------------------
 
     /// Fetches `remote`, or all remotes when `None`, pruning remote-tracking refs deleted on the remote. A
     /// repository without remotes is a no-op, not an error. Then refreshes every ref list (branches, tags, stashes),
@@ -350,7 +350,7 @@ impl Engine {
         .await
     }
 
-    // ---- Working tree (WP8c) ---------------------------------------------------------------------------
+    // ---- Working tree ----------------------------------------------------------------------------------------------
 
     pub async fn file_state(&self) -> Result<FileState> {
         self.with_repo(|_, _, repo| status::get_status(repo)).await
@@ -395,7 +395,7 @@ impl Engine {
         .await
     }
 
-    // ---- Stash (WP8c) ----------------------------------------------------------------------------------
+    // ---- Stash -----------------------------------------------------------------------------------------------------
 
     /// Stashes only `files`; untracked ones among them only when `include_untracked`.
     pub async fn stash_files(&self, files: Vec<Delta>, message: Option<String>, include_untracked: bool) -> Result<()> {
@@ -461,7 +461,7 @@ impl Engine {
         .await
     }
 
-    // ---- Diff & conflicts (WP8c) -----------------------------------------------------------------------
+    // ---- Diff & conflicts ------------------------------------------------------------------------------------------
 
     /// Structured diff with the engine's size cap (`EngineOptions::diff`).
     pub async fn file_diff(&self, target: DiffTarget, file: Delta) -> Result<FileDiff> {

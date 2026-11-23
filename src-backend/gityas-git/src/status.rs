@@ -1,7 +1,7 @@
-//! WP5: working-tree status, returned as `gityas_core::models::FileState` (no events).
+//! Working-tree status, returned as `gityas_core::models::FileState` (no events).
 //!
 //! Contract (replaces the old `git_files.rs::update_git_status`, which emitted an event and aborted the whole refresh
-//! on the first unmapped delta kind, bug-log #6):
+//! on the first unmapped delta kind):
 //! * every libgit2 delta kind maps to a [`DeltaChange`]; no single entry can fail the refresh;
 //! * renames are detected HEAD→index and index→workdir (including rewrites);
 //! * untracked files are listed individually (untracked directories are recursed), ignored files are excluded;

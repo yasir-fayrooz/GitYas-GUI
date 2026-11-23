@@ -1,4 +1,4 @@
-//! Credentials page (§12): one card per provider with status, token form, Replace / Remove, Test connection and
+//! Credentials page: one card per provider with status, token form, Replace / Remove, Test connection and
 //! the provider's help text.
 
 use egui::{RichText, Ui};

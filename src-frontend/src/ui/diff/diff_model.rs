@@ -1,6 +1,6 @@
-//! Pure, UI-free row model of the diff viewer (plan WP13): `FileDiff` + mode → rows.
+//! Pure, UI-free row model of the diff viewer: `FileDiff` + mode → rows.
 //!
-//! All three modes are derived from the **same** `FileDiff` the hunk commands use (bug-log #9: the old viewer let
+//! All three modes are derived from the **same** `FileDiff` the hunk commands use (the old viewer let
 //! Monaco recompute its own diff, which could disagree with the stageable hunks):
 //!
 //! * [`hunk_rows`] (Hunk mode): one header row per hunk followed by its lines, with a blank [`RowKind::Spacer`]

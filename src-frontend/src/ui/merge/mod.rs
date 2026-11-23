@@ -1,4 +1,4 @@
-//! WP14 — merge-conflict editor (reference UI §9).
+//! Merge-conflict editor.
 //!
 //! * [`model`]: pure merge model (chunk choices → output, hand edits, undo / redo, navigation, line mapping).
 //! * [`dock`]: pure pane layout (a tree of row / column splits; docking, swapping, resizing, presets).
@@ -106,7 +106,7 @@ pub fn on_event(app: &mut GitYasApp, event: &AppEvent) {
     }
 }
 
-/// Opens the merge editor for a conflicted, repository-relative `path` (WP12's conflicted list calls this).
+/// Opens the merge editor for a conflicted, repository-relative `path` (the working tree's conflicted list calls this).
 pub fn open(app: &mut GitYasApp, path: PathBuf) {
     let Some(tab) = app.tab_mut() else { return };
     tab.center = Center::Merge(path.clone());

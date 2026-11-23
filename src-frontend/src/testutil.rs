@@ -1,4 +1,4 @@
-//! WP9: headless UI test harness (`egui_kittest` without a GPU: accesskit queries and clicks work; image
+//! Headless UI test harness (`egui_kittest` without a GPU: accesskit queries and clicks work; image
 //! snapshots need `.wgpu()` and are `#[ignore = "needs a GPU"]`).
 //!
 //! * [`TestApp::mock`] — the `--mock` app (static data, in-memory engine without a session).

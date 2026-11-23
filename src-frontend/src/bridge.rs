@@ -1,4 +1,4 @@
-//! WP9: the link between the egui thread and the [`Engine`].
+//! The link between the egui thread and the [`Engine`].
 //!
 //! * [`EguiEventSink`] pushes engine events into a channel and requests a repaint; [`Bridge::drain_events`] is
 //!   called at the top of every frame.

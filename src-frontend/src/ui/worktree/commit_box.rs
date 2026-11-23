@@ -1,5 +1,5 @@
-//! Commit box (§6): summary with a 72-character counter, description, "Commit changes to N files" / "Commit merge",
-//! Cmd+Enter, signature check before committing (§12 signature dialog via WP15).
+//! Commit box: summary with a 72-character counter, description, "Commit changes to N files" / "Commit merge",
+//! Cmd+Enter, signature check before committing (opens the signature dialog).
 
 use egui::{Id, Key, RichText, Ui};
 use egui_phosphor::regular as icon;

@@ -1,16 +1,18 @@
-//! Application layer (Wave 2): the [`Engine`] facade the frontend talks to.
+//! Application layer: the [`Engine`] facade the frontend talks to.
 //!
-//! The engine holds one *active repository session* (D2); git commands act on it and take no `RepoId`.
-//! Commands and `open_repository` are serialised so a command cannot race a tab switch (§2.3).
+//! The engine holds one *active repository session*; git commands act on it and take no `RepoId`.
+//! Commands and `open_repository` are serialised so a command cannot race a tab switch.
 //! Blocking git/SQLite work runs on `spawn_blocking`.
 //!
-//! Module ownership (one WP per file, so Wave 2 can run in parallel):
-//! * `session` — shared plumbing (Wave 2 skeleton): [`session::SessionCtx`], the command lock, `with_repo`, the
-//!   remote-operation registry, scoped emission. WP8a implements the lifecycle (`start`, `open_repository`, …).
+//! Modules:
+//! * `session` — shared plumbing: [`session::SessionCtx`], the command lock, `with_repo`, the remote-operation
+//!   registry, scoped emission.
 //! * `refresh` — shared: recompute repo state and emit the matching events (used by commands and watchers).
 //! * `progress` — shared: remote-op registration + `TransferProgress` → `AppEvent::RemoteProgress` (git facade, clone).
-//! * `bootstrap` — Wave 3: [`Engine::open`] / [`Engine::in_memory`] for the frontend.
-//! * `repos`, `settings` — WP8a. `auth` — WP8d. `git` — WP8c. `watch` — WP8b. `cache` — WP8e.
+//! * `bootstrap` — [`Engine::open`] / [`Engine::in_memory`] for the frontend.
+//! * `repos` — the repository registry and the session lifecycle (`start`, `open_repository`, tabs).
+//! * `settings` — settings and commit signature. `auth` — credentials. `git` — the git command facade.
+//! * `watch` — repository watcher and periodic fetch. `cache` — the commit-graph cache.
 
 mod auth;
 mod bootstrap;
@@ -51,7 +53,7 @@ pub enum CheckoutTarget {
 /// Tunables. `Default` is what the app ships with; tests shorten the intervals.
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
-    /// Periodic fetch of the active repository (§2 item 7). `None` disables the scheduler. When enabled, this is only
+    /// Periodic fetch of the active repository. `None` disables the scheduler. When enabled, this is only
     /// the interval until the settings are read: from then on the scheduler follows `Settings::fetch_interval`.
     pub fetch_interval: Option<Duration>,
     /// Debounce window for the filesystem watchers.
@@ -96,10 +98,10 @@ pub(crate) struct Inner {
     pub(crate) runtime: tokio::runtime::Handle,
     pub(crate) options: EngineOptions,
     pub(crate) sessions: Arc<session::SessionState>,
-    /// Serialises credential writes (`set_credential` / `delete_credential`, WP8d) so each `AuthStatusUpdated`
+    /// Serialises credential writes (`set_credential` / `delete_credential`) so each `AuthStatusUpdated`
     /// matches the store's final state. Independent of the command lock: saving a token never waits for a fetch.
     pub(crate) auth_lock: tokio::sync::Mutex<()>,
-    /// In-process state of the commit-graph cache (WP8e): hot entry, GC throttle, stats.
+    /// In-process state of the commit-graph cache: hot entry, GC throttle, stats.
     pub(crate) commit_graph: cache::CommitGraphState,
     /// Serialises settings writes (`update_settings`, `modify_settings`, `update_commit_signature`) so a
     /// read-modify-write never loses a concurrent change. Taken only on the blocking pool.

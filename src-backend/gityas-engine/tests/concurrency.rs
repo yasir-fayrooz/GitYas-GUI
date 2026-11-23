@@ -1,4 +1,4 @@
-//! WP8f scenarios 2 and 8: switching repositories while remote operations and commands are in flight.
+//! Scenarios 2 and 8: switching repositories while remote operations and commands are in flight.
 
 // Test helpers outside `#[test]` fns: `allow-unwrap-in-tests` does not reach them.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -73,7 +73,7 @@ async fn switching_repository_mid_fetch_cancels_it_and_drops_its_events() {
         async move { engine.open_repository(b).await }
     });
     // Give `open_repository` time to validate B and cancel A's session; it then waits for the command lock that the
-    // parked fetch holds. (No public signal for "cancel_active has run"; see wp8f notes.)
+    // parked fetch holds. (No public signal for "cancel_active has run".)
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!switch.is_finished(), "the switch must wait for the command holding the lock");
     assert_eq!(

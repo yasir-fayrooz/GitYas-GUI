@@ -1,7 +1,7 @@
-//! WP5 commits: live walk + sort order, head, commit staged files (bugs #3, #4, #5), commit file lists, bodies.
+//! Commits: live walk + sort order, head, commit staged files, commit file lists, bodies.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test crate: helpers outside #[test] fns too
 
-mod wp5_support;
+mod worktree_support;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use gityas_git::commits::{
     build_commit_message, commit_body, commit_staged_files, get_commit_files_list, get_commits_live, get_head, reset_to_commit,
     retain_reachable, reword_commit, sort_commits,
 };
-use wp5_support::{TestRepo, delta, sig};
+use worktree_support::{TestRepo, delta, sig};
 
 fn oid(hex: &str) -> Oid {
     Oid::from_hex(hex.trim()).unwrap()
@@ -95,7 +95,7 @@ fn sort_ignores_missing_parents_and_duplicates() {
 
 #[test]
 fn sort_survives_very_deep_history() {
-    // The old recursive DFS would overflow the stack here (bug-log WP5.2).
+    // The old recursive DFS would overflow the stack here.
     let n: u32 = 200_000;
     let o = |i: u32| Oid::from_bytes(&i.to_be_bytes()).unwrap();
     let commits: Vec<Commit> = (0..n)
@@ -245,7 +245,7 @@ fn head_reports_branch_detached_and_unborn() {
 fn head_works_on_bare_repo() {
     let src = TestRepo::with_commit();
     let bare = tempfile::tempdir().unwrap();
-    wp5_support::git_ok(bare.path(), &["clone", "-q", "--bare", src.path().to_str().unwrap(), "."]);
+    worktree_support::git_ok(bare.path(), &["clone", "-q", "--bare", src.path().to_str().unwrap(), "."]);
     let r = git2::Repository::open(bare.path()).unwrap();
     assert!(matches!(get_head(&r).unwrap(), Head::Branch { .. }));
 }
@@ -615,7 +615,7 @@ fn reword_detached_head_moves_head_only() {
     assert_eq!(repo.rev("main"), tip);
 }
 
-/// The WP4 merge path: libgit2 `Repository::merge` leaves MERGE_HEAD (possibly several entries) and conflicts in
+/// The merge path: libgit2 `Repository::merge` leaves MERGE_HEAD (possibly several entries) and conflicts in
 /// the index; committing must refuse while conflicted, then use HEAD + every MERGE_HEAD and clean up the state.
 #[test]
 fn libgit2_merge_state_commit_uses_all_merge_heads() {

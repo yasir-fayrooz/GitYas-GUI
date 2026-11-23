@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use crate::db::{self, db, lock};
 use crate::schema::{self, CACHE_VERSION};
 
-/// Cache DB DAO (§3.4): one writer + one reader connection, so UI reads never wait behind a bulk insert (WAL).
+/// Cache DB DAO: one writer + one reader connection, so UI reads never wait behind a bulk insert (WAL).
 /// Disposable: callers fall back to a live walk on any error. Inserts are idempotent (`INSERT OR IGNORE`), so
 /// concurrent processes are harmless.
 #[derive(Clone)]
@@ -112,7 +112,7 @@ impl CacheDb {
     }
 
     /// In one transaction: insert `commits` (and their parents) idempotently, then replace the ref-tip snapshot
-    /// and fingerprint. Precondition (§3.4): after this call every commit reachable from `tips` is cached, i.e.
+    /// and fingerprint. Precondition: after this call every commit reachable from `tips` is cached, i.e.
     /// `commits` ⊇ reach(tips) ∖ reach(previous snapshot tips).
     pub fn store_refresh(&self, repo: &RepoId, commits: &[CommitRow], tips: &[RefTip], fingerprint: &RefsFingerprint) -> Result<()> {
         let now = db::unix_now()?;

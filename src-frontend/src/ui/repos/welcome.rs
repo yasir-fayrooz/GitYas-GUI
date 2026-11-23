@@ -1,4 +1,4 @@
-//! Centre when no repository is open (reference UI §1 "Welcome"), or the spinner while the first one opens.
+//! Centre when no repository is open, or the spinner while the first one opens.
 
 use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;

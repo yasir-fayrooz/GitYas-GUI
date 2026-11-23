@@ -1,6 +1,6 @@
-//! WP8a: settings and commit signature.
+//! Settings and commit signature.
 //!
-//! The signature is `None` until the user sets one (bug-log §8.1 #5: the old default was empty strings, which
+//! The signature is `None` until the user sets one (the old default was empty strings, which
 //! libgit2 rejects). Whatever is stored has been trimmed and validated with `CommitSignature::validate`; commit/merge
 //! read it with `Settings::require_signature`. Settings don't touch the session, so these commands don't take the
 //! command lock (storage serialises writes).

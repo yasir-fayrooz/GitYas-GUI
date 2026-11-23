@@ -1,4 +1,4 @@
-//! §7 Commit / stash details (the Changes panel while a commit / stash is selected). The message and file list of a commit are fetched lazily and cached
+//! Commit / stash details (the Changes panel while a commit / stash is selected). The message and file list of a commit are fetched lazily and cached
 //! per commit id ([`super::HistoryUi`]); stash files come with `StashDetails`.
 
 use egui::{Margin, RichText, Sense, Ui, WidgetInfo, WidgetType};
@@ -235,7 +235,7 @@ fn message_editor(ui: &mut Ui, p: &Palette, edit: &mut MessageEdit, busy: bool, 
     cancel && !busy
 }
 
-/// Summary and body; when `editable`, a click on the box opens the editor (§7).
+/// Summary and body; when `editable`, a click on the box opens the editor.
 fn message_view(ui: &mut Ui, p: &Palette, commit: &Commit, cache: &mut HistoryUi, id: &Oid, rewordable: bool) {
     let editable = rewordable && !commit.lossy && matches!(cache.bodies.get(id), Some(Loadable::Ready(body)) if !body.lossy);
     let frame = egui::Frame::new()

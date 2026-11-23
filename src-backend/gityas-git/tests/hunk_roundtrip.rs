@@ -1,5 +1,5 @@
-//! Wave 1 integration: hunks produced by WP6's `get_file_diff` must be accepted by WP5's hunk operations
-//! (same diff options, same `HunkRef::content_hash`). Each WP tested its half alone; this is the join.
+//! Integration: hunks produced by `get_file_diff` must be accepted by the worktree hunk operations
+//! (same diff options, same `HunkRef::content_hash`). Each side is tested alone elsewhere; this is the join.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: helpers outside #[test] fns too
 
 use std::fs;

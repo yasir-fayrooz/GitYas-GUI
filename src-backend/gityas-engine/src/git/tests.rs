@@ -1,4 +1,4 @@
-//! WP8c facade tests: every command group through the engine, asserting both the returned value and the emitted
+//! Facade tests: every command group through the engine, asserting both the returned value and the emitted
 //! events. Temp repositories built with git2; a local bare repository is the remote.
 
 use std::future::Future;

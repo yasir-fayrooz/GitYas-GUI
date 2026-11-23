@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use gityas_core::Oid;
 use gityas_core::models::{BranchKind, Commit, GraphOptions, Head, Reference, ReferenceKind, Tag, split_remote_branch};
 
-// ---- Ref pills (§4) ---------------------------------------------------------------------------------------------
+// ---- Ref pills -----------------------------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PillKind {
@@ -141,7 +141,7 @@ pub fn pills_tooltip(pills: &[Pill]) -> String {
         .join("\n")
 }
 
-// ---- Commit search (§4 Cmd+F) -----------------------------------------------------------------------------------
+// ---- Commit search (Cmd+F) -----------------------------------------------------------------------------------------
 
 /// A prepared search query: case-insensitive substring of the summary / author name / email, or an id prefix.
 #[derive(Debug, Clone, Default)]
@@ -203,7 +203,7 @@ pub fn next_match(commits: &[Commit], search: &Search, from: Option<usize>, back
         .find(|&i| search.matches(&commits[i]))
 }
 
-// ---- Branch folders (§5) ----------------------------------------------------------------------------------------
+// ---- Branch folders ------------------------------------------------------------------------------------------------
 
 /// One visible sidebar row of a folder tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,7 +294,7 @@ fn emit(dir: &Dir, prefix: &str, depth: usize, is_open: &impl Fn(&str) -> bool, 
     }
 }
 
-// ---- Tags (§5) --------------------------------------------------------------------------------------------------
+// ---- Tags ----------------------------------------------------------------------------------------------------------
 
 /// Where a tag exists, once the remotes' tag lists are known.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,7 +338,7 @@ pub fn tag_rows(tags: &[Tag], remote_tags: Option<&HashMap<String, Vec<String>>>
     rows.into_values().collect()
 }
 
-// ---- Names and errors (§11, §13) --------------------------------------------------------------------------------
+// ---- Names and errors ----------------------------------------------------------------------------------------------
 
 /// Why `name` is not a valid branch / tag name (git's `check-ref-format` rules for one ref component path), or
 /// `None` if it is valid. The engine validates again; this drives the dialog's live error.
@@ -396,7 +396,7 @@ pub fn message_body(message: &str) -> &str {
 
 /// Whether `target` is `head` or one of its ancestors, walking parent links through `commits` (display order, so
 /// children always precede parents: nothing listed after `target` can lead to it). Commits whose message can be
-/// edited (§7) are exactly these.
+/// edited are exactly these.
 pub fn is_head_or_ancestor(commits: &[Commit], index: &HashMap<Oid, usize>, head: &Oid, target: &Oid) -> bool {
     let Some(&goal) = index.get(target) else { return false };
     let mut seen = std::collections::HashSet::new();

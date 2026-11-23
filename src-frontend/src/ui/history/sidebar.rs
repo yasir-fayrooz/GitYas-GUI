@@ -1,4 +1,4 @@
-//! §5 Refs sidebar (the Branches panel pinned on the right; its TAGS / STASHES rows also fill the context bar's popups): "Create branch", filter box and collapsible LOCAL / REMOTE / TAGS / STASHES sections. Section and folder
+//! Refs sidebar (the Branches panel pinned on the right; its TAGS / STASHES rows also fill the context bar's popups): "Create branch", filter box and collapsible LOCAL / REMOTE / TAGS / STASHES sections. Section and folder
 //! open state persist in egui memory (keyed by section and folder path).
 
 use egui::{Align2, Color32, FontId, Margin, Rect, RichText, Sense, Ui, WidgetInfo, WidgetType};

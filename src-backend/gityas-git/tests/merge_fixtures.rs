@@ -3,7 +3,7 @@
 //! renders conflict markers ([`render_diff3`]) and is the merge editor's fallback.
 //!
 //! The merge editor itself uses the old app's layout; its expected values are the old suite's,
-//! unchanged, in `wp6_legacy_suite.rs`. The two layouts agree on every fixture except `complex_5_chunks` (xdiff
+//! unchanged, in `merge_legacy_suite.rs`. The two layouts agree on every fixture except `complex_5_chunks` (xdiff
 //! aligns theirs' conflicting lines at 204.., after a 144-line insertion, where the editor's diff pairs them
 //! with the matching `analyze_conflicts` lines at 54..). (`mod_rs_edge_case` agrees once the editor layout's final
 //! empty line, which `split_inclusive` does not have, is dropped.)
@@ -12,7 +12,7 @@
 //! (`base` = the real ancestor; `merged` = position in the auto-merged template).
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test-only helpers (clippy.toml covers #[test] fns only)
 
-mod wp6_common;
+mod diff_support;
 
 use gityas_git::merge::{merge_texts, render_diff3};
 
@@ -22,7 +22,7 @@ type R = (usize, usize);
 fn check(name: &str, expected: &[(R, R, R, R)]) {
     let read = |f: &str| std::fs::read_to_string(format!("{}/tests/fixtures/merge/{name}/{f}.txt", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let (base, ours, theirs) = (read("ancestor"), read("ours"), read("theirs"));
-    let (code, git_out) = wp6_common::git_merge_file(&base, &ours, &theirs);
+    let (code, git_out) = diff_support::git_merge_file(&base, &ours, &theirs);
     assert_eq!(
         render_diff3(&base, &ours, &theirs, ["ours", "base", "theirs"]).unwrap(),
         git_out,
@@ -58,7 +58,7 @@ fn two_one_line_conflicts() {
 
 #[test]
 fn complex_5_chunks() {
-    // The editor layout differs here (wp6_legacy_suite: theirs 54..58, 63..71, 83..89, 250..254, 519..527).
+    // The editor layout differs here (merge_legacy_suite: theirs 54..58, 63..71, 83..89, 250..254, 519..527).
     check(
         "complex_5_chunks",
         &[

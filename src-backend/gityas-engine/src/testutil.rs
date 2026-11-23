@@ -1,5 +1,5 @@
-//! Test helpers shared by the engine's unit tests (Wave 2 skeleton). They let each module test against an active
-//! session without going through `open_repository` (WP8a): [`install_session`] installs one directly, with no
+//! Test helpers shared by the engine's unit tests. They let each module test against an active
+//! session without going through `open_repository`: [`install_session`] installs one directly, with no
 //! watchers or scheduler.
 
 use std::path::{Path, PathBuf};

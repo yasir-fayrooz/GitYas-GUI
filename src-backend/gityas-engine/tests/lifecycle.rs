@@ -1,4 +1,4 @@
-//! WP8f end-to-end scenarios through the public `Engine` API: commit flow, restart, delete, credentials, shutdown.
+//! End-to-end scenarios through the public `Engine` API: commit flow, restart, delete, credentials, shutdown.
 
 // Test helpers outside `#[test]` fns: `allow-unwrap-in-tests` does not reach them.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -383,7 +383,7 @@ async fn shutdown_is_idempotent_and_leaves_a_sessionless_engine() {
     assert_eq!(names(&h.sink.take()), ["CommitsSignatureUpdated"]);
 }
 
-/// Scenario 7, race (engine bug WP8f.1): a switch that is still pending when `shutdown` runs must not install a
+/// Scenario 7, race: a switch that is still pending when `shutdown` runs must not install a
 /// session (watchers + fetch scheduler) after `shutdown` returned.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_switch_pending_during_shutdown_does_not_start_a_session() {

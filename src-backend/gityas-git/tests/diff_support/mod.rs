@@ -1,4 +1,4 @@
-//! Helpers shared by the WP6 integration tests. The `git` CLI is used here as a **test-only oracle**.
+//! Helpers shared by the diff, conflict and merge-fixture tests. The `git` CLI is used here as a **test-only oracle**.
 #![allow(dead_code)]
 
 use std::path::Path;

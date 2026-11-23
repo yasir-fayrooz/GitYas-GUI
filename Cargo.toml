@@ -48,10 +48,10 @@ git2 = { version = "0.20", features = ["vendored-openssl"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 rusqlite_migration = "2.3"
 
-# Auth (WP3, §4). keyring 3.6: `sync-secret-service` alone makes the persistent Secret Service store (GNOME Keyring /
+# Auth. keyring 3.6: `sync-secret-service` alone makes the persistent Secret Service store (GNOME Keyring /
 # KWallet over D-Bus) the default on Linux/FreeBSD/OpenBSD; `linux-native` alone would be session-scoped keyutils.
 # `vendored` builds libdbus from source and links it statically, so the Linux build needs no libdbus-1-dev or
-# pkg-config and cross-compiles from Windows with cargo-zigbuild (docs/releasing.md). TODO(WP3 open item): add
+# pkg-config and cross-compiles from Windows with cargo-zigbuild (docs/releasing.md). TODO: add
 # `crypto-rust` (encrypts the secret on the session bus) once the lockfile can be updated online.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "vendored"] }
 

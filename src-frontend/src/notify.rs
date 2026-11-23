@@ -1,4 +1,4 @@
-//! WP9: toasts and the notification log (reference UI §14).
+//! Toasts and the notification log.
 //!
 //! Bottom-right stack, max 3 visible, newest on top; success/info auto-dismiss after 4 s, warnings 8 s, errors
 //! stay until dismissed; hover pauses the timer; optional single action button. The ‹BELL› popover lists the last

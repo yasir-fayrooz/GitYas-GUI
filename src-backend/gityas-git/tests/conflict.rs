@@ -1,17 +1,17 @@
-//! WP6 conflict read / resolve on real `git merge` conflicts (git CLI used only to set up and to check).
+//! Conflict read / resolve on real `git merge` conflicts (git CLI used only to set up and to check).
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test-only helpers (clippy.toml covers #[test] fns only)
 
-mod wp6_common;
+mod diff_support;
 
 use std::path::Path;
 
+use diff_support::{git, git_ok};
 use gityas_core::GitYasError;
 use gityas_core::diff::DiffKind;
 use gityas_core::models::{DeletedMergeAction, MergeConflict};
 use gityas_git::merge::{
     conflict_from_texts, conflict_sides, get_merge_conflict, mark_resolved, render_diff3, resolve_conflict, resolve_conflict_with_action,
 };
-use wp6_common::{git, git_ok};
 
 struct Repo {
     dir: tempfile::TempDir,

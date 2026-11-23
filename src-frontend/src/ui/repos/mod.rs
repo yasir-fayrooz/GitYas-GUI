@@ -1,5 +1,5 @@
-//! WP10 — repositories & tabs (reference UI §1 tabs + welcome, §2 picker, §3 add / clone dialog, §13 remove
-//! repository, §16 tab shortcuts).
+//! Repositories & tabs: the tab bar and welcome screen, the repository picker, the add / clone dialog, removing a
+//! repository and the tab shortcuts.
 //!
 //! * [`tabs`]: the tab bar (switch, close, middle-click, drag to reorder, context menu).
 //! * [`picker`]: the repository popup under the tab bar's `+` and the context bar's switcher (filter, open,
@@ -11,7 +11,7 @@
 //! **Session operations are serialised.** Opening, closing and removing repositories all change the engine's single
 //! active session; started concurrently they can finish in any order (the engine's command lock is not FIFO with
 //! respect to validation), leaving the session on a repository the tab bar doesn't show as active, and an
-//! `open_repository` racing `set_open_tabs` can persist the wrong active tab (Wave 2 notes). So every session change
+//! `open_repository` racing `set_open_tabs` can persist the wrong active tab. So every session change
 //! goes through one queue ([`ReposUi::queue`], one bridge task at a time, key [`TASK_SESSION`]); a newer switch
 //! replaces a queued one. The tab bar itself ([`Store::open_tabs`](crate::store::Store)) is UI state the user edits
 //! directly; it is persisted with `set_open_tabs` after every change and after every session operation, again one
@@ -206,7 +206,7 @@ fn move_tab(app: &mut GitYasApp, from: usize, to: usize) {
     }
 }
 
-/// Asks to unregister `id` (§13); closes its tab first, even when it is the active one.
+/// Asks to unregister `id`; closes its tab first, even when it is the active one.
 fn confirm_remove(app: &mut GitYasApp, id: RepoId) {
     let Some(name) = app.store.repository(&id).map(|r| r.name.clone()) else {
         return;

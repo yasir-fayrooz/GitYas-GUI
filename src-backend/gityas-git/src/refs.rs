@@ -1,4 +1,4 @@
-//! WP4: references and tags (create / delete local and remote, push, list remote tag names).
+//! References and tags (create / delete local and remote, push, list remote tag names).
 //!
 //! `Reference::target` and `Tag::target` are always the **peeled commit** (the old code keyed annotated tags by
 //! the tag object id, so they never decorated their commit).

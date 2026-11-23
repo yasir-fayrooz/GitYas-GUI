@@ -2,11 +2,11 @@
 //!
 //! None of the four providers needs the account's real username for HTTPS git with a token, but each needs a
 //! **non-empty** username in HTTP Basic auth, so every provider has a `default_username` used when the user leaves
-//! the field blank. WP4's credential callback uses [`effective_username`].
+//! the field blank. The git credential callback uses [`effective_username`].
 
 use gityas_core::{Credential, Provider};
 
-/// What the UI (WP15) shows next to a provider's token form, and what the git credential callback (WP4) needs.
+/// What the UI shows next to a provider's token form, and what the git credential callback needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderHelp {
     pub provider: Provider,

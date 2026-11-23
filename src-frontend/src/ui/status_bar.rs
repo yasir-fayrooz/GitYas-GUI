@@ -1,5 +1,5 @@
-//! Status bar (reference UI §1). Shared (WP9): from the left, notifications ‹BELL› (the log opens upwards), HEAD and
-//! commit count; on the right the remote-operation progress (WP16's `remote::status_progress`), the zoom level and the
+//! Status bar. Shared: from the left, notifications ‹BELL› (the log opens upwards), HEAD and
+//! commit count; on the right the remote-operation progress (`remote::status_progress`), the zoom level and the
 //! GitYas version (opens What's new).
 
 use egui::{Margin, RectAlign, RichText, Ui, WidgetInfo, WidgetType};

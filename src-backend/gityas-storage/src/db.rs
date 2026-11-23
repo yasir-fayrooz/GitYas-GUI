@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use gityas_core::{GitYasError, Result};
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 
-/// `busy_timeout` for every connection (§3.2): waits for another connection/process instead of failing.
+/// `busy_timeout` for every connection: waits for another connection/process instead of failing.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 /// Maps a SQLite error to the crate-boundary error type (orphan rule forbids a `From` impl).

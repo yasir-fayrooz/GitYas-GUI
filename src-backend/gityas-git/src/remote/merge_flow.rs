@@ -7,7 +7,7 @@
 //!   refused with the list of files, and nothing is modified.
 //! * Merging into a branch that isn't checked out is only allowed as a fast-forward (moves the ref, no
 //!   working-tree change). A real merge requires `target` to be HEAD.
-//! * Conflicts are left in the index with the repository in the merge state (for WP6's conflict UI);
+//! * Conflicts are left in the index with the repository in the merge state (for the conflict UI);
 //!   [`abort_merge`] restores the pre-merge state without touching unrelated local changes.
 
 use std::collections::BTreeSet;
@@ -26,7 +26,7 @@ use crate::repository::{RepoState, ensure_clean_state, ensure_not_bare, fresh_in
 
 pub use gityas_core::models::{AbortMergeOutcome, MergeOutcome, PullOutcome};
 
-/// Resolves `name` (full ref name, or a short name git can DWIM) through symbolic refs (`origin/HEAD`, bug-log #2).
+/// Resolves `name` (full ref name, or a short name git can DWIM) through symbolic refs (`origin/HEAD`).
 fn resolve_ref<'r>(repo: &'r Repository, name: &str) -> Result<git2::Reference<'r>> {
     let reference = match repo.find_reference(name) {
         Ok(r) => r,

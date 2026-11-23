@@ -17,7 +17,7 @@ impl CommitSignature {
         }
     }
 
-    /// libgit2 rejects empty names; callers must check this instead of panicking (bug-log §8.1 #5).
+    /// libgit2 rejects empty names; callers must check this instead of panicking.
     /// Equivalent to `self.validate().is_ok()`.
     pub fn is_valid(&self) -> bool {
         self.validate().is_ok()
@@ -58,7 +58,7 @@ pub enum Theme {
     Dark,
 }
 
-/// Diff viewer mode (WP13). Default is `Hunk`.
+/// Diff viewer mode. Default is `Hunk`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffViewMode {

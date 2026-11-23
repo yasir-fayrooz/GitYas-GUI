@@ -1,14 +1,14 @@
-//! WP5 stash creation: path-limited `stash_files` (oracle: `git stash push -- <paths>`), `create_stash`, `pop_stash`,
+//! Stash creation: path-limited `stash_files` (oracle: `git stash push -- <paths>`), `create_stash`, `pop_stash`,
 //! and the libgit2 defect that rules out `stash_save_ext` + pathspec.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test crate: helpers outside #[test] fns too
 
-mod wp5_support;
+mod worktree_support;
 
 use gityas_core::GitYasError;
 use gityas_core::models::{CommitSignature, DeltaChange};
 use gityas_git::stash::pop_stash;
 use gityas_git::worktree::{create_stash, stash_files};
-use wp5_support::{TestRepo, delta, renamed, sig};
+use worktree_support::{TestRepo, delta, renamed, sig};
 
 /// Repository with a mix of staged, unstaged, deleted, new and untracked changes.
 fn mixed() -> TestRepo {

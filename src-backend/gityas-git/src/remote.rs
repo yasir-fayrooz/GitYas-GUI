@@ -1,4 +1,4 @@
-//! WP4: credential callback (§4: attempt cap, `allowed_types`, PAT then git's saved credentials), fetch / push / merge /
+//! Credential callback (attempt cap, `allowed_types`, PAT then git's saved credentials), fetch / push / merge /
 //! abort merge, `detect_provider(remote_url)`, `test_connection`.
 //!
 //! Every network operation takes a [`RemoteContext`]: the credential source, the repository's resolved provider
@@ -46,7 +46,7 @@ pub enum TransferProgress {
 #[derive(Clone, Copy)]
 pub struct RemoteContext<'a> {
     pub credentials: &'a dyn CredentialProvider,
-    /// The repository's provider (stored on the repository, §4). `None`: detect from each remote URL's host.
+    /// The repository's provider (stored on the repository). `None`: detect from each remote URL's host.
     pub provider: Option<Provider>,
     /// Fall back to git's saved credentials when no PAT is stored (or it is rejected): the configured credential
     /// helper (`credential.helper`) for HTTPS, ssh-agent and `~/.ssh` keys for SSH. Default true.

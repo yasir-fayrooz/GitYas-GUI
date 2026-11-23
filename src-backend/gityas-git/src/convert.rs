@@ -1,5 +1,5 @@
-//! Shared `git2 <-> gityas_core` conversions and hashing used by more than one module (WP0-owned; WP4/5/6 may
-//! add conversions here but must not change existing signatures or the hash definition).
+//! Shared `git2 <-> gityas_core` conversions and hashing used by more than one module. Existing
+//! signatures and the hash definition must not change: diffs and hunk staging both depend on them.
 
 use gityas_core::{GitYasError, Oid, Result};
 
@@ -36,7 +36,7 @@ impl StableHasher {
     }
 }
 
-/// `HunkRef::content_hash`: produced by the diff (WP6) and verified before hunk stage/unstage/discard (WP5),
+/// `HunkRef::content_hash`: produced by the diff and verified before hunk stage/unstage/discard,
 /// so both sides must call this. Feed every line of the hunk in order as `(origin, content)`, where `origin` is
 /// the libgit2 line origin char (`' '`, `'+'`, `'-'`, `'='`, `'>'`, `'<'`) and `content` the raw line bytes
 /// including any trailing newline. The header and line numbers are deliberately excluded (they are compared
@@ -52,11 +52,11 @@ pub fn hunk_content_hash<'a>(lines: impl IntoIterator<Item = (char, &'a [u8])>) 
     h.finish()
 }
 
-/// Context lines of every displayed / stageable hunk (WP6 `get_file_diff`, WP5 hunk staging).
+/// Context lines of every displayed / stageable hunk (`get_file_diff` and hunk staging).
 pub const DIFF_CONTEXT_LINES: u32 = 3;
 
-/// Applies the options that decide **hunk boundaries** (context, inter-hunk merging, indent heuristic). WP6 builds
-/// `FileDiff` hunks with these and WP5 must re-compute the diff with the same options before verifying a
+/// Applies the options that decide **hunk boundaries** (context, inter-hunk merging, indent heuristic). The diff builds
+/// `FileDiff` hunks with these and hunk staging must re-compute the diff with the same options before verifying a
 /// `HunkRef::content_hash`, otherwise the same edit yields different hunks and staging reports `StaleHunk`.
 /// `indent_heuristic` is on to match the `git diff` CLI default (it is the test oracle).
 pub fn apply_hunk_diff_options(opts: &mut git2::DiffOptions) -> &mut git2::DiffOptions {

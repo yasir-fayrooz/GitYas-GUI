@@ -1,5 +1,5 @@
-//! WP11 — history, graph, refs sidebar (reference UI §4 graph, §5 sidebar, §7 commit / stash details, §11 create
-//! branch / tag dialogs, §13 branch / tag / stash deletes).
+//! History: the commit graph, refs sidebar, commit / stash details, create branch / tag dialogs and branch / tag /
+//! stash deletes.
 //!
 //! Layout: [`sidebar`] (the drawer's Branches page), [`graph`] (centre), [`details`] (the Changes page while a commit /
 //! stash is selected) and the dialogs. Screens render from the [`Store`](crate::store::Store) and collect
@@ -55,7 +55,7 @@ impl HistoryUi {
     }
 }
 
-/// Draft of a commit's new message (§7, click the message to edit it).
+/// Draft of a commit's new message (click the message to edit it).
 #[derive(Debug, Clone)]
 pub struct MessageEdit {
     pub commit: Oid,

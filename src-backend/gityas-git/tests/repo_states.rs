@@ -1,9 +1,9 @@
-//! WP5 repository-state matrix (review checklist): empty/unborn, detached HEAD, no remotes, bare, linked worktree,
+//! Repository-state matrix (review checklist): empty/unborn, detached HEAD, no remotes, bare, linked worktree,
 //! submodule, shallow clone, merge in progress, non-UTF-8 content and paths, very large file / long history.
-//! Each state runs the WP5 API surface that applies to it.
+//! Each state runs the history and working-tree API surface that applies to it.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test crate: helpers outside #[test] fns too
 
-mod wp5_support;
+mod worktree_support;
 
 use git2::Repository;
 use gityas_core::GitYasError;
@@ -12,7 +12,7 @@ use gityas_git::cache::{ref_tips, should_bypass_cache, walk_new_commits};
 use gityas_git::commits::{commit_staged_files, get_commit_files_list, get_commits_live, get_head};
 use gityas_git::status::get_status;
 use gityas_git::worktree::{discard_files, stage_files, stage_hunk, stash_files, unstage_files};
-use wp5_support::{TestRepo, delta, file_url, git_ok, hunk_refs, sig};
+use worktree_support::{TestRepo, delta, file_url, git_ok, hunk_refs, sig};
 
 /// Common smoke run: status, head, live walk, ref tips, stage + unstage + commit of a new file.
 fn exercise(repo: &TestRepo) {

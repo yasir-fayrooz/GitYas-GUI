@@ -1,4 +1,4 @@
-//! WP8d: credential commands (PATs only, §4).
+//! Credential commands (PATs only).
 //!
 //! * Auth state is global: none of these commands needs (or looks at) the active session, except
 //!   [`Engine::test_connection`], which by definition connects to the active repository's remote.
@@ -495,7 +495,7 @@ mod tests {
 
     /// Local transports never invoke the credential callback, so this proves remote selection (via the stored
     /// repository provider, read fresh from storage), opening the repository and the connection plumbing, but not
-    /// that a token is accepted; the HTTPS path needs a real or fake HTTP server (see wp8d-notes.md).
+    /// that a token is accepted; the HTTPS path needs a real or fake HTTP server.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_connection_to_a_local_bare_remote() {
         let t = test_engine();

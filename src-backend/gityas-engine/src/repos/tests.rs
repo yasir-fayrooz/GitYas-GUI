@@ -296,7 +296,6 @@ async fn delete_inactive_repository_keeps_the_session() {
     t.engine.shutdown().await.unwrap();
 }
 
-/// Needs WP8e's `cache::purge_repository` (a no-op in the Wave 2 skeleton). Run after integration.
 #[tokio::test(flavor = "multi_thread")]
 async fn delete_repository_purges_cached_history() {
     let t = test_engine();
@@ -593,7 +592,7 @@ async fn shutdown_is_idempotent_and_keeps_tabs() {
     assert!(clone_op.flag().load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(t.engine.active_repository(), None);
     assert_eq!(t.engine.open_tabs().await.unwrap().active, Some(repo.id.clone()));
-    // Terminal for sessions (WP8f.1).
+    // Terminal for sessions.
     assert_eq!(t.engine.open_repository(repo.id).await.err(), Some(GitYasError::Cancelled));
     assert_eq!(t.engine.active_repository(), None);
 }

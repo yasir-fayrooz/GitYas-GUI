@@ -1,5 +1,5 @@
-//! OS integration: data/cache/log directories, tracing initialisation, opening URLs (WP7), single instance
-//! ([`claim_instance`]). No deep links, no argv handling (D7).
+//! OS integration: data/cache/log directories, tracing initialisation, opening URLs, single instance
+//! ([`claim_instance`]). No deep links, no argv handling.
 //!
 //! Directory policy:
 //! * defaults come from `directories::ProjectDirs::from("com", "gityas", "GitYas")`;
@@ -471,13 +471,13 @@ mod tests {
         let paths = Paths::under(tmp.path());
 
         let guard = init_tracing_with(&paths, None).unwrap();
-        tracing::info!("wp7 test marker");
+        tracing::info!("platform test marker");
         drop(guard); // flushes the non-blocking writer
 
         let files = log_files(&paths.log_dir).unwrap();
         assert_eq!(files.len(), 1, "{files:?}");
         let contents = std::fs::read_to_string(&files[0]).unwrap();
-        assert!(contents.contains("wp7 test marker"), "{contents}");
+        assert!(contents.contains("platform test marker"), "{contents}");
         assert!(contents.contains("logging initialised"), "{contents}");
         assert!(!contents.contains('\u{1b}'), "file log must not contain ANSI escapes");
 

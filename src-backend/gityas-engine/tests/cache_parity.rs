@@ -1,4 +1,4 @@
-//! WP8f scenario 4: the commit-graph cache is invisible in the event stream. Cold fill, warm hit (after a restart on
+//! Scenario 4: the commit-graph cache is invisible in the event stream. Cold fill, warm hit (after a restart on
 //! the same cache dir), the in-memory incremental path and the SQLite incremental path (mutation while the engine is
 //! down) must produce exactly the `CommitWrapper` of a live walk (`use_commit_cache: false`).
 

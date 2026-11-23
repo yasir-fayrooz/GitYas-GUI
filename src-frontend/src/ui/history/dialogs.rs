@@ -1,4 +1,4 @@
-//! §11 Create branch / Rename branch / Create tag dialogs (400 px modals, live validation, Enter / Esc).
+//! Create branch / Rename branch / Create tag dialogs (400 px modals, live validation, Enter / Esc).
 
 use egui::RichText;
 use gityas_core::{GitYasError, Oid};

@@ -1,4 +1,4 @@
-//! One structured diff that drives both display and hunk staging (§5, WP6/WP13).
+//! One structured diff that drives both display and hunk staging.
 
 use std::sync::Arc;
 

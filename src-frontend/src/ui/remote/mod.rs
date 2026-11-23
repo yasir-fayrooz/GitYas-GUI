@@ -1,6 +1,6 @@
-//! WP16 — remote ops UI: fetch / pull / push with progress and errors, merge, abort merge, push-without-upstream
-//! dialog, the banner (merge in progress, warnings) and the status-bar progress (reference UI §1 banner, §10, §11,
-//! §13 abort merge).
+//! Remote ops UI: fetch / pull / push with progress and errors, merge, abort merge, push-without-upstream
+//! dialog, the banner (merge in progress, warnings) and the status-bar
+//! progress.
 //!
 //! Texts and decisions are pure functions in [`text`] (unit-tested); this file wires them to the engine and egui.
 //!
@@ -52,7 +52,7 @@ pub struct RemoteUi {
     flash: Option<(String, Option<f64>)>,
 }
 
-/// §11 "Push branch without upstream" (only when there are several remotes).
+/// "Push branch without upstream" (only when there are several remotes).
 #[derive(Debug, Clone)]
 struct PushDialog {
     refname: String,
@@ -62,7 +62,7 @@ struct PushDialog {
     name: String,
     /// Inline error from the engine (e.g. "already exists on the remote").
     error: Option<String>,
-    /// Focus the name field on the first frame (§11: text inputs autofocus).
+    /// Focus the name field on the first frame (text inputs autofocus).
     autofocus: bool,
 }
 
@@ -341,7 +341,7 @@ pub fn merge_into_current(app: &mut GitYasApp, source: String) {
     );
 }
 
-/// Toast for a merge / pull outcome; conflicts also show the banner and WP12's conflicted section (both driven by
+/// Toast for a merge / pull outcome; conflicts also show the banner and the working tree's conflicted section (both driven by
 /// the `RepoStatusUpdated` / `GitFilesChanged` events the engine emits).
 fn report_merge(app: &mut GitYasApp, outcome: &MergeOutcome, source: &str, target: &str) {
     match text::merge_report(outcome, source, target) {
@@ -359,7 +359,7 @@ fn report_merge(app: &mut GitYasApp, outcome: &MergeOutcome, source: &str, targe
     }
 }
 
-/// Banner `[Abort merge]` (confirmed, §13).
+/// Banner `[Abort merge]` (confirmed).
 pub fn abort_merge(app: &mut GitYasApp) {
     app.confirm(Confirm::new(
         "Abort merge",

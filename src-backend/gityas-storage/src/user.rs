@@ -254,7 +254,7 @@ impl UserDb {
         tx.commit().map_err(db)
     }
 
-    /// Stores the commit signature. Rejects a blank name or email (`InvalidInput`, bug-log §8.1 #5).
+    /// Stores the commit signature. Rejects a blank name or email (`InvalidInput`).
     pub fn set_commit_signature(&self, signature: &CommitSignature) -> Result<()> {
         validate_signature(signature)?;
         let value = serde_json::to_string(signature).map_err(|err| GitYasError::Storage(format!("cannot encode signature: {err}")))?;

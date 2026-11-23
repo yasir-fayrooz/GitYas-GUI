@@ -1,4 +1,4 @@
-//! File sections of the WIP panel (§6): Conflicted / Unstaged / Staged, rows, multi-select, context menu, and the
+//! File sections of the WIP panel: Conflicted / Unstaged / Staged, rows, multi-select, context menu, and the
 //! stage / unstage / discard / stash actions they trigger.
 
 use std::collections::HashSet;
@@ -447,7 +447,7 @@ pub(super) fn apply(app: &mut GitYasApp, action: Action, workdir: Option<&Path>)
     }
 }
 
-/// §13: "Discard changes to 3 files? This can't be undone." / "Delete 2 untracked files?".
+/// "Discard changes to 3 files? This can't be undone." / "Delete 2 untracked files?".
 pub(super) fn confirm_discard(app: &mut GitYasApp, files: Vec<Delta>) {
     if files.is_empty() {
         return;

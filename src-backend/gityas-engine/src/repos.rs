@@ -1,4 +1,4 @@
-//! WP8a: repository registry and the session lifecycle (start / shutdown / open / close / tabs).
+//! Repository registry and the session lifecycle (start / shutdown / open / close / tabs).
 //!
 //! Locking (see `session.rs`): only operations that touch the active session (`open_repository`,
 //! `close_repository`, `delete_repository`, `set_repository_provider`, `shutdown`) take the command lock. Pure

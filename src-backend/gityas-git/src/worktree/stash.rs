@@ -1,5 +1,5 @@
 //! Stash creation: whole-tree [`create_stash`] (popped with [`crate::stash::pop_stash`]) (used around fast-forward merges) and path-limited
-//! [`stash_files`]. (Stash list / apply / drop are WP4's `stash` module.)
+//! [`stash_files`]. (Stash list / apply / drop are in the `stash` module.)
 //!
 //! **Why `stash_files` is plumbing, not `stash_save_ext` + `StashSaveOptions::pathspec`:** git2 0.20 does expose
 //! `pathspec`, but libgit2 1.9's `git_stash_save_with_opts` with paths records *all* untracked files in the

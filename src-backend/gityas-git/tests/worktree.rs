@@ -1,15 +1,15 @@
-//! WP5 working-tree operations: file stage/unstage/discard and hunk stage/unstage/discard, with the git CLI as a
+//! Working-tree operations: file stage/unstage/discard and hunk stage/unstage/discard, with the git CLI as a
 //! test-only oracle (`git add -A`, `git reset`, `git restore`, `git apply [--cached] [-R]`).
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test crate: helpers outside #[test] fns too
 
-mod wp5_support;
+mod worktree_support;
 
 use gityas_core::GitYasError;
 use gityas_core::diff::HunkRef;
 use gityas_core::models::DeltaChange;
 use gityas_git::status::get_status;
 use gityas_git::worktree::{discard_files, discard_hunk, stage_files, stage_hunk, unstage_files, unstage_hunk};
-use wp5_support::{TestRepo, delta, hunk_refs, renamed, split_cli_diff};
+use worktree_support::{TestRepo, delta, hunk_refs, renamed, split_cli_diff};
 
 /// 20 numbered lines, so edits far apart produce separate hunks.
 fn numbered(n: usize) -> String {
@@ -348,7 +348,7 @@ fn stage_hunk_of_untracked_file_stages_exactly_the_shown_content() {
     assert_eq!(repo.git(&["show", ":new.txt"]), "hello\nworld");
 }
 
-/// Same libgit2 quirk as WP6's `untracked_file_below_a_stray_dot_git_dir_is_diffed`: the hunk must still be found.
+/// Same libgit2 quirk as the diff test `untracked_file_below_a_stray_dot_git_dir_is_diffed`: the hunk must still be found.
 #[test]
 fn stage_hunk_of_untracked_file_below_a_stray_dot_git_dir() {
     let repo = TestRepo::with_commit();
@@ -441,7 +441,7 @@ fn unstage_hunk_of_staged_rename() {
     assert!(unstaged.contains("+X") && !unstaged.contains("+Y"), "{unstaged}");
 }
 
-// ---------------------------------------------------------------- stale hunks (bug-log #8)
+// ---------------------------------------------------------------- stale hunks
 
 #[test]
 fn bug8_stale_hunk_after_file_changed_is_rejected() {

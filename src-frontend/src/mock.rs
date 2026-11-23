@@ -1,4 +1,4 @@
-//! WP9: `--mock` mode. Static data in core types (ported from the egui template's mock repository) so the UI and
+//! `--mock` mode. Static data in core types (ported from the egui template's mock repository) so the UI and
 //! its snapshots work without a repository on disk. The engine runs in memory with no session, so commands fail
 //! with `NoActiveRepository` (shown as a toast).
 

@@ -1,4 +1,4 @@
-//! WP4: open / init / clone, repository-state queries (bare, shallow, worktree, merge in progress), remotes.
+//! Open / init / clone, repository-state queries (bare, shallow, worktree, merge in progress), remotes.
 //!
 //! Everything is path based and stateless: callers open a fresh `git2::Repository` per command (it is `!Sync`).
 
@@ -259,7 +259,7 @@ pub fn clone_destination(url: &str, base_dir: &Path) -> Result<PathBuf> {
     Ok(base_dir.join(name))
 }
 
-/// Clones `url` into `dest` (which must not exist or be an empty directory). Authenticated like fetch (§4);
+/// Clones `url` into `dest` (which must not exist or be an empty directory). Authenticated like fetch;
 /// SSH URLs use ssh-agent or `~/.ssh` keys. Honors `ctx.cancel` (returns `GitYasError::Cancelled`) and reports `ctx.progress`.
 pub fn clone(url: &str, dest: &Path, ctx: &RemoteContext<'_>) -> Result<Repository> {
     if let Ok(mut entries) = std::fs::read_dir(dest) {
@@ -292,7 +292,7 @@ pub fn clone(url: &str, dest: &Path, ctx: &RemoteContext<'_>) -> Result<Reposito
     builder.clone(url, dest).map_err(|e| session.map_error(e))
 }
 
-// ---- crate-internal helpers shared by WP4 modules ------------------------------------------------------------
+// ---- crate-internal helpers shared by the repository modules -------------------------------------------------------
 
 /// The repository index, re-read from disk if another process (CLI, other app) changed it since libgit2 cached it.
 pub(crate) fn fresh_index(repo: &Repository) -> Result<git2::Index> {
@@ -337,7 +337,7 @@ pub(crate) fn ensure_clean_state(repo: &Repository, action: &str) -> Result<()> 
     Ok(())
 }
 
-/// `CommitSignature` -> libgit2 signature, refusing empty names/emails (bug-log #5) instead of panicking.
+/// `CommitSignature` -> libgit2 signature, refusing empty names/emails instead of panicking.
 pub(crate) fn git_signature(signature: Option<&CommitSignature>, action: &str) -> Result<git2::Signature<'static>> {
     let sig = signature
         .filter(|s| s.is_valid())

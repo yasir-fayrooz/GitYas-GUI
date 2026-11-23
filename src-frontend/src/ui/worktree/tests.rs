@@ -350,7 +350,7 @@ fn commit_without_signature_asks_for_one_and_does_not_commit() {
     t.harness.get_by_label("No commit signature set yet; you will be asked for one.");
     t.harness.get_by_label("Commit changes to 2 files").click();
     t.settle();
-    // `settings::request_signature` (WP15) was asked; its dialog is WP15's (stub on this branch).
+    // `settings::request_signature` was asked; the settings UI shows its dialog.
     assert!(t.app().worktree_ui.awaiting_signature);
     assert!(!t.app().bridge.is_running(super::TASK_COMMIT));
     assert_eq!(repo.head().ok().and_then(|h| h.target()), before);
@@ -429,7 +429,7 @@ fn merge_in_progress_prefills_lists_conflicts_and_commits_the_merge() {
     );
     assert_eq!(super::model::section_files(files(t.app()), Section::Conflicted).len(), 1);
 
-    // Resolve outside the app (WP14's editor does this via the engine), then commit the merge.
+    // Resolve outside the app (the merge editor does this via the engine), then commit the merge.
     write_file(&repo, "a.txt", "resolved\n");
     let mut index = repo.index().unwrap_or_else(|e| panic!("{e}"));
     index.add_path(Path::new("a.txt")).unwrap_or_else(|e| panic!("{e}"));

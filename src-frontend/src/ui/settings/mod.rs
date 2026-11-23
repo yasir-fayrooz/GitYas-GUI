@@ -1,4 +1,4 @@
-//! WP15 — settings: credentials (PATs), commit signature, appearance (reference UI §12, §15).
+//! Settings: credentials (PATs), commit signature, appearance.
 //!
 //! * Settings are the drawer's Settings page, with its sub-pages as a row of tabs ([`open`]: ‹GEAR› at the top
 //!   right, Cmd+, , `[Open credentials]` toast actions). Leaving the page forgets every draft ([`sync`]).

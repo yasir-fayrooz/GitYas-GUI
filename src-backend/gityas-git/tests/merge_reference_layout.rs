@@ -1,5 +1,5 @@
 //! Merge-editor reference layouts, beyond the old app's suite in
-//! `wp6_legacy_suite.rs` (whose numbers stay unchanged). Expected values are pinned from a reference O(NP) +
+//! `merge_legacy_suite.rs` (whose numbers stay unchanged). Expected values are pinned from a reference O(NP) +
 //! diff3 merge on the same three files.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test-only helpers (clippy.toml covers #[test] fns only)
 

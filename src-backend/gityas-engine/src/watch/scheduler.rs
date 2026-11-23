@@ -1,4 +1,4 @@
-//! Periodic background fetch of the active repository (replaces `globals::run_interval_function`, bug-log #1/#12).
+//! Periodic background fetch of the active repository (replaces `globals::run_interval_function`).
 //!
 //! * The period is `Inner::fetch_interval` (the user's setting), followed live: a change re-times the next tick
 //!   from the previous one. The first tick is one period after the session starts (opening a repository already

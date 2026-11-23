@@ -1,4 +1,4 @@
-//! Repository-level state the UI shows outside the file lists (Wave 3): an operation in progress (merge banner,
+//! Repository-level state the UI shows outside the file lists: an operation in progress (merge banner,
 //! commit box prefill) and history caveats (shallow clone notice).
 
 use serde::{Deserialize, Serialize};

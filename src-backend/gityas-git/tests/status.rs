@@ -1,8 +1,8 @@
-//! WP5 status: every delta kind maps (bug-log #6), renames, untracked recursion, conflicts once, submodules,
+//! Status: every delta kind maps, renames, untracked recursion, conflicts once, submodules,
 //! ignored excluded, deterministic order; `git status --porcelain` as the oracle.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test crate: helpers outside #[test] fns too
 
-mod wp5_support;
+mod worktree_support;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use gityas_core::GitYasError;
 use gityas_core::models::{Delta, DeltaChange, FileState};
 use gityas_git::status::{delta_change, get_status};
-use wp5_support::{TestRepo, delta, renamed};
+use worktree_support::{TestRepo, delta, renamed};
 
 fn code(change: DeltaChange) -> char {
     match change {
@@ -205,7 +205,7 @@ fn status_on_unborn_repo() {
 fn status_on_bare_repo_is_a_clear_error() {
     let src = TestRepo::with_commit();
     let bare = tempfile::tempdir().unwrap();
-    wp5_support::git_ok(bare.path(), &["clone", "-q", "--bare", src.path().to_str().unwrap(), "."]);
+    worktree_support::git_ok(bare.path(), &["clone", "-q", "--bare", src.path().to_str().unwrap(), "."]);
     let err = get_status(&git2::Repository::open(bare.path()).unwrap()).unwrap_err();
     assert!(matches!(err, GitYasError::InvalidInput(ref m) if m.contains("bare")), "{err:?}");
 }

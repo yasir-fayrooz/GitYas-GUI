@@ -3,8 +3,8 @@
 //!
 //! An O(NP) diff + diff3 merge: the old app's chunker
 //! (`misc/gityas_myers.rs`, `misc/gityas_merger.rs`, `git_rs/files.rs::get_conflicts_by_files`) approximated it and
-//! was restored after the migration replaced it with [`super::engine`] (git's `xdl_do_merge`); WP6.18 swapped its
-//! Myers diff for an O(NP) one. Git's and this one are both valid merges, but they align conflicts differently:
+//! was restored after the migration replaced it with [`super::engine`] (git's `xdl_do_merge`), with its
+//! Myers diff swapped for an O(NP) one. Git's and this one are both valid merges, but they align conflicts differently:
 //! xdiff's heuristics can pair a side's changed lines with a far-away, similar block (`complex_5_chunks`: theirs at
 //! line 204 instead of the matching `analyze_conflicts` lines at 54), and git's EAGER level folds neighbouring
 //! conflicts together. This layout is:
@@ -15,9 +15,9 @@
 //!
 //! The old chunker's display trims (a common suffix within 20 lines left outside the chunk, repeated context after a
 //! conflict not duplicated) compensated for its Myers diff and are gone: without them the layout matches the reference
-//! layout on every fixture and on thousands of random merges (WP6.18).
+//! layout on every fixture and on thousands of random merges.
 //!
-//! `tests/wp6_legacy_suite.rs` is the old `misc/tests.rs`, unchanged numbers included; `tests/wp6_reference_layout.rs`
+//! `tests/merge_legacy_suite.rs` is the old `misc/tests.rs`, unchanged numbers included; `tests/merge_reference_layout.rs`
 //! adds cases checked against reference layouts.
 //!
 //! **Line model** (the old one, Monaco's): a line is a `split('\n')` piece, so a text ending in `\n` has a final
@@ -25,11 +25,11 @@
 //! the editor's `split_inclusive('\n')` model, which only drops that final empty line.
 //!
 //! Fixed against the old code (none of these change the old fixtures):
-//! * WP6.1: a delete+insert at the very end of the edit script emitted its insertion twice.
-//! * WP6.2: a group of several hunks on one side and none on the other panicked (`coalesce_hunks` of nothing).
-//! * WP6.4: `files.rs` turned the ranges into "1-based unless 0", which the old frontend read as 0-based; the two
+//! * A delete+insert at the very end of the edit script emitted its insertion twice.
+//! * A group of several hunks on one side and none on the other panicked (`coalesce_hunks` of nothing).
+//! * `files.rs` turned the ranges into "1-based unless 0", which the old frontend read as 0-based; the two
 //!   offsets cancelled except for a chunk starting at line 1, reported as 0. Ranges are now computed directly.
-//! * WP6.6: the old Myers trace blew up on large rewrites. The diff gives up past [`MAX_EDIT_DISTANCE`] (or
+//! * The old Myers trace blew up on large rewrites. The diff gives up past [`MAX_EDIT_DISTANCE`] (or
 //!   [`MAX_SNAKES`] recorded runs); the caller then uses git's layout.
 //! * No indexing that can panic: inconsistent intermediate results give `None` (git's layout is used instead).
 
@@ -266,7 +266,7 @@ fn merge_diffs(ours: Vec<Hunk>, theirs: Vec<Hunk>, ours_lines: &[&str], theirs_l
         match (got_ours.as_slice(), got_theirs.as_slice()) {
             ([h], []) => result.push(MergedChunk::Ours(*h)),
             ([], [h]) => result.push(MergedChunk::Theirs(*h)),
-            // WP6.2: several touching hunks on one side only. They are contiguous in both files, so one hunk.
+            // Several touching hunks on one side only. They are contiguous in both files, so one hunk.
             (hs, []) => result.push(MergedChunk::Ours(coalesce(hs)?)),
             ([], hs) => result.push(MergedChunk::Theirs(coalesce(hs)?)),
             ([o], [t]) if same_change(o, t, ours_lines, theirs_lines) => result.push(MergedChunk::Both(*o)),
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn change_of_the_last_line_without_newline_is_not_duplicated() {
-        // WP6.1: delete+insert at the end of the script; the old code emitted the insertion twice.
+        // Delete+insert at the end of the script; the old code emitted the insertion twice.
         let m = layout("a\nb", "a\nB", "x\na\nb");
         assert!(m.chunks.is_empty());
         assert_eq!(m.merged, "x\na\nB");
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn several_hunks_on_one_side_do_not_panic() {
-        // WP6.2: base "" / ours "x1" / theirs "" used to panic in `coalesce_hunks`.
+        // Base "" / ours "x1" / theirs "" used to panic in `coalesce_hunks`.
         let m = layout("", "x1", "");
         assert!(m.chunks.is_empty());
         assert_eq!(m.merged, "x1");

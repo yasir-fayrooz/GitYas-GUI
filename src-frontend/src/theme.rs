@@ -1,4 +1,4 @@
-//! GitYas theme, dark (the template) and light (reference UI §0 / §15).
+//! GitYas theme, dark (the template) and light.
 //!
 //! [`install`] registers both palettes with egui (`set_visuals_of`), and [`set_preference`] maps the user's
 //! `Theme` setting onto egui's `ThemePreference`, so "System" follows the OS with no extra plumbing. Colours are

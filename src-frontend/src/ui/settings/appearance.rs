@@ -1,4 +1,4 @@
-//! Appearance page (§12, §15, §16): theme, icon bar position, default diff view, graph options, zoom.
+//! Appearance page: theme, icon bar position, default diff view, graph options, zoom.
 //!
 //! Each change goes through `GitYasApp::modify_settings` (an atomic read-modify-write in the engine, so two quick
 //! changes, or a change racing a signature save, never overwrite each other); its completion copies the saved

@@ -1,4 +1,4 @@
-//! The repository popup under the tab bar's `+` and the context bar's repository switcher (reference UI §2).
+//! The repository popup under the tab bar's `+` and the context bar's repository switcher.
 
 use egui::{Align2, FontId, Layout, RichText, Sense, Stroke, Ui, UiBuilder, WidgetInfo, WidgetType};
 use egui_phosphor::regular as icon;

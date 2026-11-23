@@ -622,7 +622,7 @@ fn snapshot_diff_viewer_modes_and_guard() {
     t.harness.step();
     let request = DiffRequest {
         target: DiffTarget::WorkingTree { staged: true },
-        file: Delta::new("src/zip-stripe-gateway-worker/test/tsconfig.json", DeltaChange::Modified),
+        file: Delta::new("src/example-worker/test/tsconfig.json", DeltaChange::Modified),
     };
     inject(&mut t, request.clone(), sample_diff());
     for (mode, name) in [

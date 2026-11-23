@@ -1,5 +1,5 @@
-//! Signature page and the stand-alone signature dialog (§12: "Shown as a dialog of its own when triggered from a
-//! commit").
+//! Signature page and the stand-alone signature dialog (shown on its own when a
+//! commit needs a signature).
 
 use egui::{RichText, Ui};
 

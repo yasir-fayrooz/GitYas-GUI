@@ -1,4 +1,4 @@
-//! Fields added to the core contracts after Wave 1: `FileDiff::{old_mode, new_mode}` and `Commit::lossy`.
+//! Fields added to the core contracts later: `FileDiff::{old_mode, new_mode}` and `Commit::lossy`.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: helpers outside #[test] fns too
 
 use std::fs;

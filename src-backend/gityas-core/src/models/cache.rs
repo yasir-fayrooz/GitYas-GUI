@@ -1,4 +1,4 @@
-//! Row types for the commit-graph cache (§3.4), shared by `gityas-git` (producer) and `gityas-storage` (store).
+//! Row types for the commit-graph cache, shared by `gityas-git` (producer) and `gityas-storage` (store).
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub struct RefTip {
 }
 
 /// Hash of the sorted `(refname, oid)` set; equal fingerprints mean the cache can be served without walking.
-/// The hash function is chosen by WP5 and must be stable across runs (not `DefaultHasher`).
+/// The hash function is defined in `gityas-git` and must be stable across runs (not `DefaultHasher`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RefsFingerprint(pub Vec<u8>);
 

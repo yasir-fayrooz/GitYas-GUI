@@ -1,9 +1,9 @@
-//! Credential callback (§4) and provider detection.
+//! Credential callback and provider detection.
 //!
 //! The decision logic lives in [`CredentialState`], a small state machine with no libgit2 dependency so it can be
 //! unit-tested directly; [`Session::callbacks`] wires it into `git2::RemoteCallbacks`.
 //!
-//! Rules (fixing bug-log #10, where a rejected token looped forever and `allowed_types` was ignored):
+//! Rules (fixing the old callback, where a rejected token looped forever and `allowed_types` was ignored):
 //! * HTTPS: a PAT is offered only when libgit2 allows `USER_PASS_PLAINTEXT`. Candidates are tried in order, each at
 //!   most once: the PAT linked in Settings -> Credentials, then git's own saved login through the configured
 //!   credential helper (`git2::Cred::credential_helper`, never the CLI). At most [`MAX_CREDENTIAL_ATTEMPTS`].
@@ -555,7 +555,7 @@ impl<'a> Session<'a> {
         if let Some(message) = self.log.borrow().auth_failure.clone() {
             return GitYasError::Auth(message);
         }
-        // libgit2 messages can quote the remote URL, which may carry `user:token@` (Wave 2 open item).
+        // libgit2 messages can quote the remote URL, which may carry `user:token@`.
         redact_error(match (err.code(), err.class()) {
             (ErrorCode::Auth, _) => GitYasError::Auth(err.message().to_owned()),
             (ErrorCode::Certificate, ErrorClass::Ssh) => GitYasError::Auth(SSH_HOST_UNTRUSTED.to_owned()),
@@ -935,7 +935,7 @@ mod tests {
         assert_eq!(take(&mut st, None), "git");
     }
 
-    /// A remote that rejects every credential: the state machine must terminate (bug-log #10).
+    /// A remote that rejects every credential: the state machine must terminate.
     #[test]
     fn always_rejecting_remote_terminates() {
         for (stored, helper) in [(true, true), (true, false), (false, true), (false, false)] {

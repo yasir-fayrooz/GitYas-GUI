@@ -1,15 +1,15 @@
-//! WP4: stash list / details / apply / pop / drop.
+//! Stash list / details / apply / pop / drop.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: panics are the assertions
 
-mod wp4_support;
+mod repo_support;
 
 use std::path::PathBuf;
 
 use gityas_core::GitYasError;
 use gityas_core::models::DeltaChange;
 use gityas_git::stash::{self, StashApplyOutcome};
+use repo_support::*;
 use tempfile::TempDir;
-use wp4_support::*;
 
 #[test]
 fn empty_and_unborn() {

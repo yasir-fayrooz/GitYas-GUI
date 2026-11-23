@@ -1,4 +1,4 @@
-//! Stash dialog (§11: message, include untracked) and toolbar Pop (`stash@{0}`).
+//! Stash dialog (message, include untracked) and toolbar Pop (`stash@{0}`).
 
 use egui::RichText;
 use gityas_core::models::{Delta, StashApplyOutcome};

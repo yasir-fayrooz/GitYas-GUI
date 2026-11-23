@@ -1,4 +1,4 @@
-//! Personal-access-token storage (WP3, §4). Tokens live only in the OS keychain, never in SQLite or logs.
+//! Personal-access-token storage. Tokens live only in the OS keychain, never in SQLite or logs.
 //!
 //! Keychain layout: service [`KEYCHAIN_SERVICE`], one item per provider, account `pat/<provider key>`,
 //! value = JSON `{"username": …, "token": …}` (one item per provider means one OS prompt, not two).

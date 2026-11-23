@@ -1,5 +1,5 @@
 //! Engine commands behind the history screens' intents (checkout, branch / tag / stash operations) and their
-//! feedback (toasts, §13 confirmations). Store state is never updated here: the engine's refresh events do that.
+//! feedback (toasts, confirmations). Store state is never updated here: the engine's refresh events do that.
 
 use std::collections::HashMap;
 
@@ -169,7 +169,7 @@ fn confirm_delete_branch(app: &mut GitYasApp, refname: String, name: String) {
     }));
 }
 
-/// Deletes a local branch; if git refuses because it isn't merged, asks again with "Force delete" (§13).
+/// Deletes a local branch; if git refuses because it isn't merged, asks again with "Force delete".
 fn delete_branch(app: &mut GitYasApp, refname: String, name: String, force: bool) {
     let r = refname.clone();
     app.bridge.run(

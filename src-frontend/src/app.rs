@@ -1,5 +1,5 @@
 //! The egui application: owns the [`Bridge`] to the engine, the engine-derived [`Store`], per-tab UI state and
-//! one UI-state struct per screen module. Shared (integrator) file: WPs add fields only to their own structs
+//! one UI-state struct per screen module. Screen state belongs in each module's own structs
 //! (`ui::<module>::*Ui` / `*Tab`), not here.
 //!
 //! Startup: with an updater compiled in, the splash (`ui::splash`) covers the window and the engine starts only
@@ -33,16 +33,16 @@ pub type Deferred = Box<dyn FnOnce(&mut GitYasApp)>;
 /// What the right panel shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Selection {
-    /// Working tree (the WIP row): staged / unstaged files and the commit box (WP12).
+    /// Working tree (the WIP row): staged / unstaged files and the commit box.
     #[default]
     Wip,
-    /// A commit's details (WP11).
+    /// A commit's details.
     Commit(Oid),
-    /// A stash's details (WP11); by stash commit id, since `stash@{n}` indices shift.
+    /// A stash's details; by stash commit id, since `stash@{n}` indices shift.
     Stash(Oid),
 }
 
-/// A file diff to show in the centre (WP13). Working-tree targets are re-fetched when the files change.
+/// A file diff to show in the centre. Working-tree targets are re-fetched when the files change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffRequest {
     pub target: DiffTarget,
@@ -52,12 +52,12 @@ pub struct DiffRequest {
 /// What the centre area shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Center {
-    /// Commit graph (WP11).
+    /// Commit graph.
     #[default]
     Graph,
-    /// Diff viewer (WP13); Esc / ✕ returns to the graph.
+    /// Diff viewer; Esc / ✕ returns to the graph.
     Diff(DiffRequest),
-    /// Merge-conflict editor for this repository-relative path (WP14).
+    /// Merge-conflict editor for this repository-relative path.
     Merge(PathBuf),
 }
 
@@ -175,12 +175,12 @@ pub struct GitYasApp {
     pub bridge: Bridge,
     pub store: Store,
     pub notify: Notifications,
-    /// The open confirmation (§13); see [`GitYasApp::confirm`].
+    /// The open confirmation; see [`GitYasApp::confirm`].
     pub confirm: Option<Confirm>,
     /// Per-repository UI state, keyed by repository id (kept for closed tabs too, cheap).
     pub tabs: HashMap<RepoId, TabState>,
     pub layout: LayoutState,
-    /// Non-fatal engine warnings not yet dismissed (banner, WP16 draws them).
+    /// Non-fatal engine warnings not yet dismissed (the remote banner draws them).
     pub warnings: Vec<String>,
     /// Running with `--mock`: static data, no repository on disk; commands fail with `NoActiveRepository`.
     pub mock: bool,
@@ -307,12 +307,12 @@ impl GitYasApp {
         self.store.active.as_ref().and_then(|id| self.tabs.get(id))
     }
 
-    /// Asks for confirmation before a destructive action (§13). Replaces any open confirmation.
+    /// Asks for confirmation before a destructive action. Replaces any open confirmation.
     pub fn confirm(&mut self, confirm: Confirm) {
         self.confirm = Some(confirm);
     }
 
-    /// Error toast with the action the error suggests (§10): auth failures offer `[Open credentials]`, refused
+    /// Error toast with the action the error suggests: auth failures offer `[Open credentials]`, refused
     /// checkouts / merges (`Conflict`) offer `[Stash changes]`. `Cancelled` is silent; a stale hunk is an info toast
     /// (the diff viewer re-fetches).
     pub fn report_error(&mut self, title: &str, err: &GitYasError) {

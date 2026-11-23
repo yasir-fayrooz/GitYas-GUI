@@ -1,5 +1,4 @@
-//! WP12 — working tree & commit (reference UI §6 WIP panel + commit box, §11 stash dialog, §13 discard, toolbar
-//! Stash / Pop).
+//! Working tree & commit: the WIP panel and commit box, the stash dialog, discarding changes, toolbar Stash / Pop.
 //!
 //! * `model` — pure logic (selection, tree grouping, labels, validation, merge prefill); unit tested.
 //! * `files` — the file sections (conflicted / unstaged / staged), rows, context menu, stage / unstage / discard.
@@ -39,7 +38,7 @@ pub const TASK_POP: crate::bridge::TaskKey = "stash_pop";
 #[derive(Default)]
 pub struct WorktreeUi {
     stash: Option<stash::StashDialog>,
-    /// A commit / stash is waiting for the signature dialog (WP15's `request_signature`); cleared when the deferred
+    /// A commit / stash is waiting for the signature dialog (`settings::request_signature`); cleared when the deferred
     /// retry runs. Shown as a hint in the commit box.
     pub(crate) awaiting_signature: bool,
 }
@@ -47,7 +46,7 @@ pub struct WorktreeUi {
 /// Per-tab state: draft commit message (kept when switching tabs), file selection, list / tree toggle.
 #[derive(Default)]
 pub struct WorktreeTab {
-    /// Draft commit summary. WP11's WIP graph row shows it (`// WIP <summary>`), so it is fixed in the skeleton.
+    /// Draft commit summary. The history's WIP graph row shows it (`// WIP <summary>`).
     pub summary: String,
     pub description: String,
     pub(crate) selection: model::FileSelection,
@@ -273,7 +272,7 @@ pub(crate) fn unstage(app: &mut GitYasApp, files: Vec<Delta>) {
     files::apply(app, files::Action::Unstage(files), None);
 }
 
-/// Asks before discarding `files` (§13). Speed mode.
+/// Asks before discarding `files`. Speed mode.
 pub(crate) fn discard(app: &mut GitYasApp, files: Vec<Delta>) {
     files::confirm_discard(app, files);
 }

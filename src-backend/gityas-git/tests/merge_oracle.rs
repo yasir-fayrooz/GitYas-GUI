@@ -1,10 +1,10 @@
-//! WP6 merge engine: property tests and `git merge-file --diff3` as the oracle.
+//! Merge engine: property tests and `git merge-file --diff3` as the oracle.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test-only helpers (clippy.toml covers #[test] fns only)
 
-mod wp6_common;
+mod diff_support;
 
+use diff_support::*;
 use gityas_git::merge::{conflict_from_texts, merge_texts, render_diff3};
-use wp6_common::*;
 
 const LABELS: [&str; 3] = ["ours", "base", "theirs"];
 

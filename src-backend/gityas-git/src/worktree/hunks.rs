@@ -1,7 +1,7 @@
-//! Hunk stage / unstage / discard through libgit2 `Repository::apply` (plan §2.10; replaces the old `git diff` +
-//! `git apply` subprocesses, bug-log #8).
+//! Hunk stage / unstage / discard through libgit2 `Repository::apply` (replaces the old `git diff` +
+//! `git apply` subprocesses).
 //!
-//! Every operation first recomputes the diff the hunk came from ([`hunk_diff_options`], the options WP6's
+//! Every operation first recomputes the diff the hunk came from ([`hunk_diff_options`], the options
 //! `get_file_diff` uses) and requires a hunk with **identical ranges and `hunk_content_hash`**; otherwise it fails
 //! with `GitYasError::StaleHunk` and changes nothing.
 //! * stage: the index→workdir diff is applied to the index with a hunk callback selecting only that hunk;
@@ -70,7 +70,7 @@ fn ranges_of_ref(r: &HunkRef) -> Ranges {
 }
 
 /// Diff options for working-tree hunk diffs. **Must match `diff.rs::get_file_diff` /
-/// `convert::apply_hunk_diff_options` (WP6)**, otherwise the same edit yields different hunks and every hunk
+/// `convert::apply_hunk_diff_options`**, otherwise the same edit yields different hunks and every hunk
 /// operation fails with `StaleHunk`: 3 context lines, no inter-hunk merging, indent heuristic on (as the `git diff`
 /// CLI), typechange detection, literal (non-glob) paths, untracked files with content. `paths` limits the diff (the
 /// delta's path and, for renames/copies, its old path). The untracked options only affect index→workdir diffs.
@@ -108,7 +108,7 @@ fn side_diff<'r>(repo: &'r Repository, side: Side, file: &Delta, reverse: bool) 
     };
     if file.old_path.is_some() {
         let mut find = DiffFindOptions::new();
-        // Same as WP6's `diff.rs::find_renames`.
+        // Same as `diff.rs::find_renames`.
         find.renames(true).for_untracked(true).copies(file.change == DeltaChange::Copied);
         diff.find_similar(Some(&mut find)).map_err(git_error)?;
     }

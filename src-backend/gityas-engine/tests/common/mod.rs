@@ -1,5 +1,5 @@
-//! Shared fixtures for the engine integration tests (WP8f). Black-box: only the public API of `gityas-engine` and
-//! the Wave 1 crates is used.
+//! Shared fixtures for the engine integration tests. Black-box: only the public API of `gityas-engine` and
+//! the backend crates is used.
 #![allow(dead_code)] // each test binary uses a different subset
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test fixtures
 

@@ -19,8 +19,8 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(600);
 
 /// Backend used by these tests (and by `start_session_tasks` under `cfg(test)`). Defaults to notify's
-/// `PollWatcher`: inside the development sandbox FSEvents accepts the watch but never delivers an event (see
-/// wp8b-notes.md). Set `GITYAS_TEST_NATIVE_WATCHER=1` to run the same tests against the native backend.
+/// `PollWatcher`: inside the development sandbox FSEvents accepts the watch but never delivers an event.
+/// Set `GITYAS_TEST_NATIVE_WATCHER=1` to run the same tests against the native backend.
 pub(super) fn backend() -> Backend {
     if std::env::var_os("GITYAS_TEST_NATIVE_WATCHER").is_some() {
         Backend::Native
@@ -520,7 +520,7 @@ async fn scheduler_without_remotes_keeps_running_and_emits_nothing() {
     let task = spawn_every(&t, &ctx, Duration::from_millis(30));
     let events = collect(&t, Duration::from_millis(400)).await;
     assert!(events.is_empty(), "{:?}", names(&events));
-    assert!(!task.is_finished(), "scheduler died on a repository without remotes (bug-log #1)");
+    assert!(!task.is_finished(), "scheduler died on a repository without remotes");
     ctx.cancel.cancel();
     assert!(finishes(task).await);
 }
@@ -636,7 +636,7 @@ async fn scheduler_uses_the_sessions_current_provider() {
     repo_with_commit(dir.path());
     let ctx = t.install_session(dir.path());
     assert_eq!(ctx.provider, None);
-    // What `set_repository_provider` (WP8a) does: same session, new provider.
+    // What `set_repository_provider` does: same session, new provider.
     let mut updated = ctx.clone();
     updated.provider = Some(gityas_core::Provider::Github);
     let sessions = &t.engine.inner.sessions;

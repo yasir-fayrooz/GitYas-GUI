@@ -1,4 +1,4 @@
-//! WP6: three-way text merge and index-conflict read / resolve.
+//! Three-way text merge and index-conflict read / resolve.
 //!
 //! * [`engine`]: pure line merge, a port of git's `xdl_do_merge` (EAGER level = `git merge-file --diff3`) on top
 //!   of libgit2's xdiff. Used for conflict markers ([`render_diff3`]) and as the editor layout's fallback.

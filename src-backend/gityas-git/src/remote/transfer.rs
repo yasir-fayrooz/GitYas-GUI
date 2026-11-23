@@ -217,7 +217,7 @@ pub(crate) fn set_upstream_config(repo: &Repository, short: &str, remote: &str, 
     Ok(())
 }
 
-/// Connects to `remote` for fetch, proving the URL and credentials work (§4 "Test connection"). The smart
+/// Connects to `remote` for fetch, proving the URL and credentials work (Settings → "Test connection"). The smart
 /// transports authenticate and read the ref advertisement during the connect itself, so the refs are not listed:
 /// `git2::RemoteConnection::list` hits a debug-mode abort (null slice) on a remote with no refs (git2 0.20.4).
 pub fn test_connection(repo: &Repository, remote: &str, ctx: &RemoteContext<'_>) -> Result<()> {

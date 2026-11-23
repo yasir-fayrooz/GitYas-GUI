@@ -23,7 +23,7 @@ if [[ "${CHECK_SKIP_TESTS:-0}" != 1 ]]; then
   cargo test --workspace || bad "tests"
 fi
 
-step "dependency rule (§2)"
+step "dependency rule"
 deps_of() { cargo tree -p "$1" --prefix none --edges normal | awk '{print $1}' | sort -u; }
 for pkg in "${BACKEND_CRATES[@]}"; do
   if deps_of "$pkg" | grep -qxE 'egui|eframe'; then bad "$pkg depends on egui/eframe"; fi

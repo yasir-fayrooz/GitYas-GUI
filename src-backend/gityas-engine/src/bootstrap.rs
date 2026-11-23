@@ -1,5 +1,5 @@
-//! Wave 3 (integrator): constructors for the frontend, which may depend only on `gityas-engine`, `gityas-core`
-//! and `gityas-platform` (§2), so it cannot name `Storage` or a `CredentialStore` itself.
+//! Constructors for the frontend, which may depend only on `gityas-engine`, `gityas-core`
+//! and `gityas-platform`, so it cannot name `Storage` or a `CredentialStore` itself.
 
 use std::sync::Arc;
 

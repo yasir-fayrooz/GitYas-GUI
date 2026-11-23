@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 gityas-core.workspace = true
 git2.workspace = true
-# WP4: credentials are `SecretString`s (exposed only when handed to libgit2).
+# Credentials are `SecretString`s (exposed only when handed to libgit2).
 secrecy.workspace = true
 # Reads the header of `~/.ssh/id_*` keys to skip passphrase-protected ones (libgit2 aborts on them).
 base64.workspace = true

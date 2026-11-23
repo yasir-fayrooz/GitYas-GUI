@@ -1,14 +1,14 @@
-//! WP4: branch listing, create / delete / checkout, create remote branch.
+//! Branch listing, create / delete / checkout, create remote branch.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: panics are the assertions
 
-mod wp4_support;
+mod repo_support;
 
 use gityas_core::GitYasError;
 use gityas_core::models::BranchKind;
 use gityas_git::branches::{self, CheckoutOutcome};
 use gityas_git::remote::{NoCredentials, RemoteContext};
+use repo_support::*;
 use tempfile::TempDir;
-use wp4_support::*;
 
 fn ctx(creds: &NoCredentials) -> RemoteContext<'_> {
     RemoteContext::new(creds).with_credential_helper(false)
@@ -35,7 +35,7 @@ fn list_with_upstream_ahead_behind_and_hidden_remote_head() {
     commit_file(&fx.work, "l1", "1\n", "l1");
     commit_file(&fx.work, "l2", "2\n", "l2");
     fx.work.find_remote("origin").unwrap().fetch::<&str>(&[], None, None).unwrap();
-    // Symbolic origin/HEAD must be hidden and not panic (bug #2 / WP1 note).
+    // Symbolic origin/HEAD must be hidden and not panic (the old code panicked on it).
     fx.work
         .reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", true, "test")
         .unwrap();

@@ -175,7 +175,7 @@ fn mod_rs_edge_case_shows_the_new_last_line_in_the_chunk() {
 #[test]
 fn real_merge_shows_the_old_apps_chunk_boundaries() {
     // `complex_5_chunks` through a real merge and the engine: the panes highlight the same lines as the Tauri app
-    // (expected values from its suite, `gityas-git/tests/wp6_legacy_suite.rs`), not git's xdiff layout.
+    // (expected values from its suite, `gityas-git/tests/merge_legacy_suite.rs`), not git's xdiff layout.
     let [ancestor, ours, theirs] = legacy_fixture("complex_5_chunks");
     let mut t = TestApp::engine();
     let (dir, repo) = temp_repo();

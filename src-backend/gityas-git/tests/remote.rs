@@ -1,7 +1,7 @@
-//! WP4: fetch / push / connection test / credential callback against local and fake HTTP remotes.
+//! Fetch / push / connection test / credential callback against local and fake HTTP remotes.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // integration-test crate: panics are the assertions
 
-mod wp4_support;
+mod repo_support;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use gityas_core::{GitYasError, Provider};
 use gityas_git::remote::{self, NoCredentials, RemoteContext};
+use repo_support::*;
 use tempfile::TempDir;
-use wp4_support::*;
 
 fn ctx(creds: &NoCredentials) -> RemoteContext<'_> {
     RemoteContext::new(creds).with_credential_helper(false)
@@ -366,7 +366,7 @@ fn rejected_token_terminates_with_auth_error() {
     );
 }
 
-/// WP3 finding: never send a token to a remote whose provider isn't resolved (the old callback sent the GitHub
+/// Never send a token to a remote whose provider isn't resolved (the old callback sent the GitHub
 /// token to any host).
 #[test]
 fn unknown_provider_gets_no_token() {

@@ -1,5 +1,5 @@
-//! WP5 test helpers: temp repositories driven by the `git` CLI (test-only oracle and fixture builder, §2.10) and
-//! git2, plus a reference `HunkRef` computation matching WP6's contract.
+//! Test helpers: temp repositories driven by the `git` CLI (test-only oracle and fixture builder) and
+//! git2, plus a reference `HunkRef` computation matching the diff contract.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::{Path, PathBuf};
@@ -204,7 +204,7 @@ pub fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// Reference implementation of WP6's hunk identification: the same diff options as `get_file_diff` and
+/// Reference implementation of the diff's hunk identification: the same diff options as `get_file_diff` and
 /// `hunk_content_hash` over `(origin, raw content)` of each line.
 pub fn hunk_refs(repo: &Repository, file: &Delta, staged: bool) -> Vec<HunkRef> {
     let mut paths: Vec<&Path> = vec![file.path.as_path()];

@@ -2,7 +2,7 @@
 //! `+`/`−` signs, add/del backgrounds, intra-line highlight sections and a shared horizontal text offset. The merge
 //! editor's panes (`ui::merge::rows`) use the row height, font and [`text_job`] from here.
 //!
-//! Horizontal scrolling (decision, plan WP13): the gutters stay put and only the text moves. The view keeps one
+//! Horizontal scrolling: the gutters stay put and only the text moves. The view keeps one
 //! horizontal offset per diff and every text column paints with it, so in Split mode both columns scroll
 //! horizontally **together**, just like they scroll vertically together (one vertical `ScrollArea` drives both
 //! columns). The offset changes with horizontal wheel / trackpad input (or Shift+wheel) over the rows and with
@@ -13,9 +13,9 @@ use std::ops::Range;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Painter, Pos2, Rect, Sense, Ui, Vec2};
 
-/// Row height (reference UI §0: diff rows 20 px, fixed for virtualisation).
+/// Row height (fixed for virtualisation).
 pub(crate) const ROW_HEIGHT: f32 = 20.0;
-/// Monospace size (§0).
+/// Monospace size.
 pub(crate) const FONT_SIZE: f32 = 12.0;
 const GUTTER_PAD: f32 = 8.0;
 const SIGN_WIDTH: f32 = 16.0;

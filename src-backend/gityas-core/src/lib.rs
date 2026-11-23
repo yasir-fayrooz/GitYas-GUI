@@ -1,7 +1,7 @@
 //! Pure types shared by every GitYas crate.
 //!
 //! This crate performs no IO and does **not** depend on `git2`: conversions from `git2` types are free
-//! functions in `gityas-git` (orphan rule). Changes after WP0 go through the WP0 owner or a small rebased PR.
+//! functions in `gityas-git` (orphan rule).
 
 pub mod diff;
 pub mod error;

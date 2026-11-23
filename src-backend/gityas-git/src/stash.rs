@@ -1,4 +1,4 @@
-//! WP4: stash list / details / apply / pop / drop. (Path-limited stash creation is WP5, see `worktree`.)
+//! Stash list / details / apply / pop / drop. (Path-limited stash creation is in `worktree`.)
 //!
 //! Stashes are read from the `refs/stash` reflog rather than `git2::Repository::stash_foreach`, which `unwrap`s
 //! the message as UTF-8 and would panic on a non-UTF-8 stash message.

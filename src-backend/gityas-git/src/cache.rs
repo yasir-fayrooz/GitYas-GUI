@@ -1,7 +1,7 @@
-//! WP5: commit-graph cache primitives (§3.4): `ref_tips`, `fingerprint`, `walk_new_commits` (push new / hide old tips),
-//! `walk_until_known` (stop at already-known commits; WP8e's in-memory incremental path).
+//! Commit-graph cache primitives: `ref_tips`, `fingerprint`, `walk_new_commits` (push new / hide old tips),
+//! `walk_until_known` (stop at already-known commits; the engine's in-memory incremental path).
 //!
-//! The engine (WP8e) glues these to the cache DAO: `ref_tips` → `fingerprint` → equal to the stored one? serve from
+//! The engine glues these to the cache DAO: `ref_tips` → `fingerprint` → equal to the stored one? serve from
 //! cache : `walk_new_commits(new, stored_old)` → insert → store `new` as the snapshot. The live walk
 //! (`commits::get_commits_live`) uses the same [`ref_tips`], so cached and live views see the same tip set.
 
@@ -22,7 +22,7 @@ use crate::git_error;
 const TIP_NAMESPACES: [&str; 3] = ["refs/heads/", "refs/remotes/", "refs/tags/"];
 
 /// Pseudo-refname used for HEAD, so a detached HEAD's commits are reachable (the old code omitted HEAD and lost
-/// them, bug-log WP5.4).
+/// them).
 pub const HEAD_TIP: &str = "HEAD";
 
 /// All live ref tips peeled to commits, sorted by `(refname, oid)`. Annotated tags are peeled to their commit;
@@ -112,7 +112,7 @@ pub fn walk_new_commits(repo: &Repository, new_tips: &[RefTip], old_tips: &[RefT
 
 /// `reach(tips) \ known`, unordered. `known` must be closed under parents (e.g. a complete previously loaded
 /// history); the walk stops at known commits instead of hiding old tips. Much cheaper than [`walk_new_commits`] for a
-/// small change on a large history: libgit2's `hide` marks every ancestor of the hidden tips (WP8e measured ~70 ms on
+/// small change on a large history: libgit2's `hide` marks every ancestor of the hidden tips (measured ~70 ms on
 /// 100k commits for a one-commit change vs ~0 ms here).
 pub fn walk_until_known(repo: &Repository, tips: &[RefTip], known: &HashSet<&Oid>) -> Result<Vec<CommitRow>> {
     let mut seen: HashSet<Oid> = HashSet::new();

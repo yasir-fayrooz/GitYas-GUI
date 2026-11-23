@@ -1,17 +1,17 @@
 //! Screens. One module per area:
 //!
-//! | module | WP | |
-//! |---|---|---|
-//! | `repos` | WP10 | tab bar, repository picker, add / clone dialog, welcome screen |
-//! | `history` | WP11 | commit graph, refs sidebar, commit / stash details, branch / tag dialogs |
-//! | `worktree` | WP12 | WIP panel: staged / unstaged / conflicted files, commit box, stash dialog |
-//! | `diff` | WP13 | diff viewer (Hunk / Inline / Split) |
-//! | `merge` | WP14 | merge-conflict editor |
-//! | `settings` | WP15 | settings page (credentials, signature, appearance) |
-//! | `remote` | WP16 | fetch / pull / push / merge / abort, banner, remote progress |
-//! | `side`, `context_bar`, `git_actions`, `status_bar`, this file | WP9 (shared) | layout that calls into the modules above (`side`: the pinned Changes panel and the right-hand drawer; `context_bar`: the profile switcher, the git actions and the Settings gear; `git_actions`: Fetch / Pull / Push / Stash / Pop) |
-//! | `splash`, `changelog`, `markdown` | release | update splash screen, What's new dialog and its Markdown renderer |
-//! | `profiles` | profiles | profile switcher, New / Rename profile dialogs, switching the engine to another profile |
+//! | module | contents |
+//! |---|---|
+//! | `repos` | tab bar, repository picker, add / clone dialog, welcome screen |
+//! | `history` | commit graph, refs sidebar, commit / stash details, branch / tag dialogs |
+//! | `worktree` | WIP panel: staged / unstaged / conflicted files, commit box, stash dialog |
+//! | `diff` | diff viewer (Hunk / Inline / Split) |
+//! | `merge` | merge-conflict editor |
+//! | `settings` | settings page (credentials, signature, appearance) |
+//! | `remote` | fetch / pull / push / merge / abort, banner, remote progress |
+//! | `side`, `context_bar`, `git_actions`, `status_bar`, this file | layout that calls into the modules above (`side`: the pinned Changes panel and the right-hand drawer; `context_bar`: the profile switcher, the git actions and the Settings gear; `git_actions`: Fetch / Pull / Push / Stash / Pop) |
+//! | `splash`, `changelog`, `markdown` | update splash screen, What's new dialog and its Markdown renderer |
+//! | `profiles` | profile switcher, New / Rename profile dialogs, switching the engine to another profile |
 //! | `speed` | speed mode | compact always-on-top keyboard panel (stage / commit / push / branches / stash / tag) |
 
 pub mod changelog;
@@ -72,7 +72,7 @@ pub const fn cmd_shift(key: Key) -> KeyboardShortcut {
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), key)
 }
 
-/// Global shortcuts (reference UI §16). View-local keys (Cmd+F, J/K, Esc, Cmd+Enter) are handled by the views.
+/// Global shortcuts. View-local keys (Cmd+F, J/K, Esc, Cmd+Enter) are handled by the views.
 pub fn shortcuts(ctx: &egui::Context, app: &mut GitYasApp) {
     let pressed = |s: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&s));
     if pressed(cmd(Key::T)) {
@@ -191,7 +191,7 @@ pub fn paint_avatar(painter: &egui::Painter, p: &theme::Palette, center: egui::P
     );
 }
 
-/// Icon and colour for a change type (reference UI §0).
+/// Icon and colour for a change type.
 pub fn change_icon(p: &theme::Palette, change: DeltaChange) -> (&'static str, Color32) {
     match change {
         DeltaChange::Added | DeltaChange::Untracked | DeltaChange::Copied => (icon::PLUS, p.green),
@@ -246,7 +246,7 @@ pub fn tinted_button(ui: &mut Ui, text: &str, color: Color32, enabled: bool) -> 
     ui.add_enabled(enabled, button)
 }
 
-/// Frameless icon-only button (always has a tooltip, §0).
+/// Frameless icon-only button (always has a tooltip).
 pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(glyph).size(15.0)).frame(false))
         .on_hover_text(tooltip)

@@ -3,7 +3,7 @@ use std::fmt;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
-/// Hosted git providers. All authenticate with personal access tokens (D4); self-hosted instances are out of scope.
+/// Hosted git providers. All authenticate with personal access tokens; self-hosted instances are out of scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {

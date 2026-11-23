@@ -96,7 +96,7 @@ impl Commit {
         self.parents.is_empty()
     }
 
-    /// The mainline parent; diffs of merge commits are against this one (§6 WP6).
+    /// The mainline parent; diffs of merge commits are against this one.
     pub fn first_parent(&self) -> Option<&Oid> {
         self.parents.first()
     }

@@ -1,4 +1,4 @@
-//! Commit graph lane assignment (WP11 audit of the template's layout).
+//! Commit graph lane assignment (based on the original egui template's layout).
 //!
 //! Commits must be supplied newest-first in topological order (children before parents), as the engine sends them.
 //! Each row gets a lane for its node plus the edges drawn within that row's bounds. Lane slots are stable: a branch

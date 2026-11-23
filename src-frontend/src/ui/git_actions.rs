@@ -1,5 +1,5 @@
 //! Git actions of the context bar (`context_bar`), centred in it: Pull (with a ‹▾› dropdown holding Fetch), Push,
-//! then Stash and Pop joined into one two-part button, then Speed mode; labelled, icons only or folded into one menu as the window narrows ([`Density`]). Shared (WP9):
+//! then Stash and Pop joined into one two-part button, then Speed mode; labelled, icons only or folded into one menu as the window narrows ([`Density`]). Shared:
 //! the layout and button widget live here; what each button does belongs to the screen modules (`remote`, `worktree`).
 //! Creating a branch lives on the Branches page and in the branch switcher.
 
@@ -42,7 +42,7 @@ pub struct Action<'a> {
     pub glyph: &'a str,
     pub label: &'a str,
     pub tooltip: &'a str,
-    /// `Some(reason)` disables the button; the reason is its tooltip (§0: disabled controls say why).
+    /// `Some(reason)` disables the button; the reason is its tooltip (disabled controls say why).
     pub disabled: Option<&'a str>,
     /// Shows a spinner instead of the icon (the operation runs; other buttons stay usable).
     pub running: bool,

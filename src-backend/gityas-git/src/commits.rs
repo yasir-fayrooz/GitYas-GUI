@@ -1,11 +1,11 @@
-//! WP5: live history walk (`get_commits_live`, kept permanently as cache oracle/fallback), sorting, head,
+//! Live history walk (`get_commits_live`, kept permanently as cache oracle/fallback), sorting, head,
 //! commit staged files, commit file lists, commit bodies.
 //!
 //! Display order ([`sort_commits`]) reproduces the old `commit.rs::sort_commits` (sort by committer time, newest
 //! first, then a depth-first pass over *children* that emits a commit only after all of its children), so children
 //! always precede parents even with clock skew. Differences from the old code, all deliberate:
 //! * ties on committer time break by object id (the old order depended on revwalk order, i.e. was unspecified);
-//! * the DFS is iterative (the old recursive DFS could overflow the stack on long histories, bug-log WP5.2);
+//! * the DFS is iterative (the old recursive DFS could overflow the stack on long histories);
 //! * parents outside the list (shallow boundary, hidden commits) are ignored instead of `unwrap()`-panicking.
 
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -110,7 +110,7 @@ pub fn get_commits_newest(repo: &Repository, max: usize) -> Result<Option<Vec<Co
     Ok(None)
 }
 
-/// Sorts commits into display order (see the module docs). Pure; the cache (WP8e) must use this same function so
+/// Sorts commits into display order (see the module docs). Pure; the cache must use this same function so
 /// cached and live results are identical. Duplicate ids keep their first occurrence.
 pub fn sort_commits(commits: Vec<Commit>) -> Vec<Commit> {
     let mut seen_ids = HashSet::with_capacity(commits.len());
@@ -233,8 +233,8 @@ fn short_branch_name(refname: &str) -> String {
     refname.strip_prefix("refs/heads/").unwrap_or(refname).to_owned()
 }
 
-/// Builds a libgit2 signature, rejecting an empty or invalid identity with a clear error instead of panicking
-/// (bug-log #5). Shared by commit and stash creation.
+/// Builds a libgit2 signature, rejecting an empty or invalid identity with a clear error instead of panicking.
+/// Shared by commit and stash creation.
 pub fn signature_now(signature: &CommitSignature) -> Result<git2::Signature<'static>> {
     if !signature.is_valid() {
         return Err(GitYasError::SignatureRequired(
@@ -246,7 +246,7 @@ pub fn signature_now(signature: &CommitSignature) -> Result<git2::Signature<'sta
 }
 
 /// Joins subject and optional description and normalises with `git2::message_prettify` (no comment stripping):
-/// trailing whitespace and surplus blank lines removed, exactly one trailing newline (bug-log #4). An empty
+/// trailing whitespace and surplus blank lines removed, exactly one trailing newline. An empty
 /// subject is rejected.
 pub fn build_commit_message(message: &str, description: Option<&str>) -> Result<String> {
     let subject = message.trim();
@@ -262,8 +262,8 @@ pub fn build_commit_message(message: &str, description: Option<&str>) -> Result<
 
 /// Commits the index on top of HEAD and returns the new commit id.
 ///
-/// * Works on an unborn HEAD (first commit, no parents; bug-log #3).
-/// * Rejects an empty/invalid signature (bug-log #5) and an empty message; the message is prettified (bug-log #4).
+/// * Works on an unborn HEAD (first commit, no parents).
+/// * Rejects an empty/invalid signature and an empty message; the message is prettified.
 /// * Rejects an index with conflicts, and "nothing staged" (tree identical to HEAD's) except while a merge is in
 ///   progress (a merge commit may legitimately have no changes, e.g. after resolving to "ours").
 /// * Merge in progress: parents are HEAD followed by every `MERGE_HEAD`; afterwards the merge state is cleaned up.

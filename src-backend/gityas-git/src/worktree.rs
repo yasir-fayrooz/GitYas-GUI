@@ -1,4 +1,4 @@
-//! WP5: stage / unstage / discard (file and hunk, via libgit2 `apply` with a `HunkRef` content-hash check) and
+//! Stage / unstage / discard (file and hunk, via libgit2 `apply` with a `HunkRef` content-hash check) and
 //! path-limited stash. No `git` CLI.
 //!
 //! File operations act on the *current* state of each path, not on the (possibly stale) `DeltaChange` the UI sent:
@@ -10,7 +10,7 @@
 //! * [`discard_files`]: discards **working-tree** changes relative to the index (`git restore -- <paths>`); a path
 //!   not in the index (untracked) is deleted (`git clean`), directories are never deleted. Staged changes are kept;
 //!   the old code also threw away staged content, which is more destructive than the UI's "discard" suggests.
-//! * Conflicted paths are refused: conflicts are resolved through the merge-conflict API (WP6).
+//! * Conflicted paths are refused: conflicts are resolved through the merge-conflict API.
 //!
 //! Hunk operations live in [`hunks`], stash creation in [`stash`].
 

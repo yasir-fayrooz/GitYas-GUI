@@ -1,4 +1,4 @@
-//! Differential tests (§3.4 #7): for every scenario and every step of a mutation sequence on one cache,
+//! Differential tests: for every scenario and every step of a mutation sequence on one cache,
 //! `load_commits` through the cache must equal the live walk, and an unchanged second call must not walk.
 
 use std::path::{Path, PathBuf};
@@ -269,7 +269,7 @@ fn option_sets() -> Vec<(&'static str, EngineOptions)> {
 
 // ------------------------------------------------------------------------------------------------ sequence
 
-/// Every §3.4 #7 mutation applied one after the other on the same cache, under three GC policies.
+/// Every mutation applied one after the other on the same cache, under three GC policies.
 #[tokio::test(flavor = "multi_thread")]
 async fn differential_mutation_sequence_on_one_cache() {
     for (policy, options) in option_sets() {

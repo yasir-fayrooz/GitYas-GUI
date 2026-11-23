@@ -1,4 +1,4 @@
-//! SQLite storage (WP2, §3): `gityas.db` (user data, data dir) and `cache.db` (disposable, cache dir).
+//! SQLite storage: `gityas.db` (user data, data dir) and `cache.db` (disposable, cache dir).
 //! Never touches `git2`; secrets never stored here.
 //!
 //! Both DAOs are `Clone + Send + Sync` handles over `Arc<Mutex<Connection>>`; calls are synchronous and meant to

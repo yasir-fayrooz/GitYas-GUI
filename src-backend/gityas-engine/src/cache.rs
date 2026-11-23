@@ -1,4 +1,4 @@
-//! WP8e: commit-graph cache integration (`CommitGraphService`, §3.4).
+//! Commit-graph cache integration (`CommitGraphService`).
 //!
 //! [`load_commits`] produces the history for `CommitsUpdated`:
 //!
