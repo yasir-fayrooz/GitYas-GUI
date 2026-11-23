@@ -1,0 +1,120 @@
+[package]
+name = "gityas-frontend"
+description = "A native Git client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "gityas"
+path = "src/main.rs"
+
+# `cargo packager --release -p gityas-frontend -f <format>` (formats per OS: nsis | app,dmg | deb,appimage) for local
+# packages. Releases use it for the Windows installer only and build the macOS / Linux packages themselves
+# (scripts/release/, docs/releasing.md). The updater installs nsis (per-user, no admin prompt), app and appimage
+# bundles. Windows code-signing settings are added by scripts/release/package-windows.sh. No URL scheme or file associations (plan D7).
+[package.metadata.packager]
+product-name = "GitYas"
+identifier = "com.gityas.GitYas"
+publisher = "Yasir Fayrooz"
+category = "DeveloperTool"
+before-packaging-command = "cargo build --release -p gityas-frontend"
+# Used by the macOS (.icns) and Linux bundles only; the Windows exe embeds assets/icon.ico itself (build.rs).
+icons = ["assets/32x32.png", "assets/128x128.png", "assets/128x128@2x.png", "assets/icon.png"]
+
+[package.metadata.packager.nsis]
+installer-icon = "assets/icon.ico"
+
+[package.metadata.packager.deb]
+# The folder picker uses the XDG desktop portal (libdbus, for keyring's Secret Service backend, is linked statically).
+depends = ["xdg-desktop-portal"]
+
+[dependencies]
+gityas-core.workspace = true
+gityas-engine.workspace = true
+gityas-platform.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-phosphor.workspace = true
+serde.workspace = true
+rfd.workspace = true
+chrono.workspace = true
+cargo-packager-updater.workspace = true
+semver.workspace = true
+pulldown-cmark.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tree-sitter.workspace = true
+tree-sitter-highlight.workspace = true
+tree-sitter-language.workspace = true
+tree-sitter-bash.workspace = true
+tree-sitter-c.workspace = true
+tree-sitter-c-sharp.workspace = true
+tree-sitter-cmake.workspace = true
+tree-sitter-cpp.workspace = true
+tree-sitter-css.workspace = true
+tree-sitter-dart.workspace = true
+tree-sitter-diff.workspace = true
+tree-sitter-elixir.workspace = true
+tree-sitter-elm.workspace = true
+tree-sitter-erlang.workspace = true
+tree-sitter-fsharp.workspace = true
+tree-sitter-gleam.workspace = true
+tree-sitter-glsl.workspace = true
+tree-sitter-go.workspace = true
+tree-sitter-haskell.workspace = true
+tree-sitter-html.workspace = true
+tree-sitter-java.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-json.workspace = true
+tree-sitter-lua.workspace = true
+tree-sitter-make.workspace = true
+tree-sitter-md.workspace = true
+tree-sitter-nix.workspace = true
+tree-sitter-objc.workspace = true
+tree-sitter-ocaml.workspace = true
+tree-sitter-php.workspace = true
+tree-sitter-powershell.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-r.workspace = true
+tree-sitter-regex.workspace = true
+tree-sitter-ruby.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-scala.workspace = true
+tree-sitter-sequel.workspace = true
+tree-sitter-svelte-ng.workspace = true
+tree-sitter-swift.workspace = true
+tree-sitter-toml-ng.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-xml.workspace = true
+tree-sitter-yaml.workspace = true
+tree-sitter-zig.workspace = true
+syntect.workspace = true
+two-face.workspace = true
+global-hotkey.workspace = true
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+drag.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winsafe.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+# Test fixtures only (temp repositories); shipped code reaches git only through the engine.
+git2.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,132 @@
+use std::path::Path;
+use git2::{Delta};
+use serde::{Deserialize, Serialize};
+
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GitYasConflict {
+    pub ancestor: String,
+    pub ours: String,
+    pub theirs: String,
+    pub chunks: Vec<ConflictChunk>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ConflictType {
+    Both,           // Both sides modified
+    OursOnly,       // Only ours modified
+    TheirsOnly,     // Only theirs modified
+    Deletion,       // One side deleted, other modified
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ConflictChunk {
+    pub conflict_type: ConflictType,
+    pub ours_start: usize,
+    pub ours_end: usize,
+    pub theirs_start: usize,
+    pub theirs_end: usize,
+    pub ancestor_start: usize,
+    pub ancestor_end: usize,
+    pub ours_lines: Vec<String>,
+    pub theirs_lines: Vec<String>,
+    pub ancestor_lines: Vec<String>,
+    pub auto_merged: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GitYasDelta {
+    pub directory: String,
+    pub file_name: String,
+    pub change_type: GitYasDeltaChange,
+    pub file_path: String,
+    pub old_path: String,
+    pub new_path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GitYasDiff {
+    pub old_content: String,
+    pub new_content: String,
+    pub hunks: Vec<GitYasHunk>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GitYasHunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub enum GitYasDeltaChange {
+    ADDED,
+    UNTRACKED,
+    COPIED,
+    DELETED,
+    RENAMED,
+    MODIFIED,
+    CONFLICTED
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct GitYasFileState {
+    pub unstaged_files: Vec<GitYasDelta>,
+    pub staged_files: Vec<GitYasDelta>,
+}
+
+impl TryFrom<Delta> for GitYasDeltaChange{
+    type Error = gityas_common::error::Error;
+    fn try_from(value: Delta) -> Result<Self, Self::Error> {
+        let delta_change = match value {
+            Delta::Added => GitYasDeltaChange::ADDED,
+            Delta::Copied => GitYasDeltaChange::COPIED,
+            Delta::Deleted => GitYasDeltaChange::DELETED,
+            Delta::Modified => GitYasDeltaChange::MODIFIED,
+            Delta::Renamed => GitYasDeltaChange::RENAMED,
+            Delta::Untracked => GitYasDeltaChange::UNTRACKED,
+            Delta::Conflicted => GitYasDeltaChange::CONFLICTED,
+            v => {
+                return Err(gityas_common::error::Error::new(
+                    format!("unsupported delta type {:?}", v).as_str(),
+                ));
+            }
+        };
+
+        Ok(delta_change)
+    }
+}
+
+impl<'a> TryFrom<git2::DiffDelta<'a>> for GitYasDelta {
+    type Error = gityas_common::error::Error;
+
+    fn try_from(delta: git2::DiffDelta) -> Result<Self, Self::Error> {
+        let old_path = delta.old_file().path().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let new_path = delta.new_file().path().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let file_path = if !new_path.is_empty() { new_path.clone() } else { old_path.clone() };
+
+        let path = Path::new(file_path.as_str());
+        let directory = path.parent()
+            .map(|p| {
+                // Convert the parent path to a string and add trailing '/' if necessary
+                let mut dir = p.to_string_lossy().to_string();
+                if !dir.is_empty() && !dir.ends_with('/') {
+                    dir.push('/');
+                }
+                dir
+            })
+            .unwrap_or_default();
+        let file_name = path.file_name().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let change_type: GitYasDeltaChange = delta.status().try_into()?;
+
+        Ok(GitYasDelta {
+            old_path,
+            new_path,
+            file_path,
+            directory,
+            file_name,
+            change_type,
+        })
+    }
+}

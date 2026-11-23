@@ -1,0 +1,24 @@
+[package]
+name = "gityas-git"
+description = "git2 operations and the merge/diff engine. Sync, stateless, no globals, no SQLite."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gityas-core.workspace = true
+git2.workspace = true
+# WP4: credentials are `SecretString`s (exposed only when handed to libgit2).
+secrecy.workspace = true
+# Reads the header of `~/.ssh/id_*` keys to skip passphrase-protected ones (libgit2 aborts on them).
+base64.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,38 @@
+# The workspace gates (scripts/check.sh: fmt, clippy, tests, dependency rules) on every OS GitYas ships for.
+# Snapshot tests need a GPU and stay #[ignore]d here, as on any machine without one.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libxkbcommon-dev libssl-dev pkg-config
+
+      # rustup installs the toolchain pinned in rust-toolchain.toml on the first cargo call.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: scripts/check.sh
+        shell: bash
+        run: bash scripts/check.sh

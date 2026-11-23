@@ -1,0 +1,7 @@
+# macOS: sign the app with a stable local identity before `cargo run`, so the keychain doesn't prompt after every
+# rebuild. Without the identity (scripts/macos-dev-identity.sh) the runner just runs the binary.
+[target.aarch64-apple-darwin]
+runner = "scripts/macos-run.sh"
+
+[target.x86_64-apple-darwin]
+runner = "scripts/macos-run.sh"

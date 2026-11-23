@@ -1,0 +1,6 @@
+# The merge fixtures are compared byte-for-byte against `git merge-file`, so never convert their line endings
+# (Windows `core.autocrlf=true` would otherwise check them out as CRLF).
+src-backend/gityas-git/tests/fixtures/** -text
+# Release and dev scripts run in bash on macOS / Linux too, where CRLF breaks them.
+*.sh text eol=lf
+*.py text eol=lf

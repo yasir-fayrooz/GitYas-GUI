@@ -1,0 +1,672 @@
+import { useEffect, useRef, useState } from 'react';
+import * as monaco from 'monaco-editor';
+import { Loader2Icon, SquareCheckIcon, SquareIcon } from 'lucide-react';
+import { loadDefaultMonacoEditor } from '../file-viewer/utils';
+import { ConflictChunk, GitYasDelta, GitYasConflict } from '@/models/gityas-file';
+import {
+  ChunkInfo,
+  convertMergeTypeToLineOrigin,
+  IEditOperation,
+  IResolvedContent,
+  LineOrigin,
+  LineStatus,
+  LineStatusNumber,
+  MergeType
+} from './types';
+import { LineOverlayWidget } from './line-overlay-widget';
+import { Button } from '@/components/ui/button';
+
+interface IProps {
+  conflict: GitYasConflict;
+  mergeType: MergeType;
+  selectedFile: GitYasDelta;
+  height: number;
+  width: number;
+  showCheckboxes?: boolean;
+  onChunkToggle?: (
+    chunkIndex: number,
+    mergeType: MergeType,
+    isChecked: boolean,
+    modelValue: string,
+    lineStatus: LineStatus[]
+  ) => void;
+  handleLineToggle?: (
+    chunkIndex: number,
+    line: number,
+    mergeType: MergeType,
+    isChecked: boolean,
+    modelValue: string,
+    lineStatus: LineStatus[]
+  ) => void;
+  resolvedContent?: IResolvedContent;
+  setResolvedContent: (resolvedContent: IResolvedContent) => void;
+  setOutput?: (output: string) => void;
+  conflictIndex: number;
+  scrollSync?: MergeViewerScrollSync;
+  onScrollSync?: (scrollSync: MergeViewerScrollSync) => void;
+}
+
+export interface MergeViewerScrollSync {
+  source: MergeType;
+  anchorIndex: number;
+  progress: number;
+  version: number;
+}
+
+export const MonacoMergeViewer = (props: IProps) => {
+  const {
+    conflict,
+    height,
+    width,
+    selectedFile,
+    mergeType,
+    showCheckboxes,
+    onChunkToggle,
+    handleLineToggle,
+    resolvedContent,
+    setResolvedContent,
+    setOutput,
+    conflictIndex,
+    scrollSync,
+    onScrollSync
+  } = props;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const suppressScrollSyncRef = useRef(false);
+  const lastAppliedScrollSyncVersionRef = useRef(0);
+
+  //CHECKBOX SECTION
+  const CHECKBOX_DIV_WIDTH = 25;
+  //lINES
+  const [chunkLineWidgets, setChunkLineWidgets] = useState<LineOverlayWidget[]>([]);
+  const chunkSelectionVersionRef = useRef<number>(0);
+  const decorationIds = useRef<string[]>([]);
+
+  const resolvedContentRef = useRef<IResolvedContent | undefined>(resolvedContent);
+
+  const getMaxScrollTop = (editor: monaco.editor.IStandaloneCodeEditor) => {
+    const scrollHeight = editor.getScrollHeight();
+    const layoutInfo = editor.getLayoutInfo();
+    return Math.max(0, scrollHeight - layoutInfo.height);
+  };
+
+  const setScrollTopWithoutSync = (editor: monaco.editor.IStandaloneCodeEditor, scrollTop: number) => {
+    if (Math.abs(editor.getScrollTop() - scrollTop) <= 0.5) return;
+
+    suppressScrollSyncRef.current = true;
+    editor.setScrollTop(scrollTop);
+  };
+
+  const centerConflictWithoutSync = (editor: monaco.editor.IStandaloneCodeEditor, chunkIndex: number) => {
+    setScrollTopWithoutSync(editor, getCenteredConflictScrollTop(editor, chunkIndex));
+  };
+
+  const getConflictStartLine = (chunkIndex: number) => {
+    let startLine: number = 0;
+    if (mergeType === MergeType.OURS) startLine = conflict.chunks[chunkIndex].ours_start;
+    else if (mergeType === MergeType.THEIRS) startLine = conflict.chunks[chunkIndex].theirs_start;
+    else if (mergeType === MergeType.ANCESTOR && resolvedContentRef.current) {
+      //Find the line position of chunk index start
+      for (let i = 0; i < resolvedContentRef.current.lineStatus.length; i++) {
+        if (resolvedContentRef.current.lineStatus[i].chunkInfo?.has(chunkIndex)) {
+          startLine = i;
+          break;
+        }
+      }
+    }
+
+    return startLine;
+  };
+
+  const getCenteredConflictScrollTop = (editor: monaco.editor.IStandaloneCodeEditor, chunkIndex: number) => {
+    const lineHeight = editor.getOption(monaco.editor.EditorOption.lineHeight);
+    const centeredScrollTop = getConflictStartLine(chunkIndex) * lineHeight - height / 2;
+    return Math.min(getMaxScrollTop(editor), Math.max(0, centeredScrollTop));
+  };
+
+  const getScrollAnchors = (editor: monaco.editor.IStandaloneCodeEditor) => {
+    const maxScrollTop = getMaxScrollTop(editor);
+    const conflictAnchors = conflict.chunks.map((_, index) => getCenteredConflictScrollTop(editor, index));
+    return [0, ...conflictAnchors, maxScrollTop];
+  };
+
+  const getAnchorScrollTop = (editor: monaco.editor.IStandaloneCodeEditor, scrollSync: MergeViewerScrollSync) => {
+    const anchors = getScrollAnchors(editor);
+    const anchorIndex = Math.min(scrollSync.anchorIndex, anchors.length - 2);
+    const start = anchors[anchorIndex];
+    const end = anchors[anchorIndex + 1];
+
+    return start + (end - start) * scrollSync.progress;
+  };
+
+  const getScrollSync = (editor: monaco.editor.IStandaloneCodeEditor, scrollTop: number) => {
+    const anchors = getScrollAnchors(editor);
+    let anchorIndex = 0;
+
+    for (let i = 0; i < anchors.length - 1; i++) {
+      if (scrollTop >= anchors[i] && scrollTop <= anchors[i + 1]) {
+        anchorIndex = i;
+        break;
+      }
+
+      if (scrollTop > anchors[i + 1]) {
+        anchorIndex = i;
+      }
+    }
+
+    const start = anchors[anchorIndex];
+    const end = anchors[anchorIndex + 1];
+    const progress = end === start ? 0 : (scrollTop - start) / (end - start);
+
+    return {
+      source: mergeType,
+      anchorIndex,
+      progress: Math.min(1, Math.max(0, progress)),
+      version: 0
+    };
+  };
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+
+    centerConflictWithoutSync(editorRef.current, conflictIndex - 1);
+  }, [conflictIndex, height]);
+
+  useEffect(() => {
+    if (!editorRef.current || !scrollSync) return;
+    if (scrollSync.source === mergeType) return;
+    if (lastAppliedScrollSyncVersionRef.current === scrollSync.version) return;
+
+    lastAppliedScrollSyncVersionRef.current = scrollSync.version;
+    setScrollTopWithoutSync(editorRef.current, getAnchorScrollTop(editorRef.current, scrollSync));
+  }, [scrollSync]);
+
+  useEffect(() => {
+    resolvedContentRef.current = resolvedContent;
+  }, [resolvedContent]);
+
+  useEffect(() => {
+    chunkLineWidgets.forEach((lw) => editorRef.current?.layoutOverlayWidget(lw));
+  }, [scrollTop]);
+
+  useEffect(() => {
+    if (!resolvedContent) return;
+    chunkLineWidgets.forEach((lw) => lw.updateSelections(resolvedContent.lineStatus));
+  }, [resolvedContent]);
+
+  useEffect(() => {
+    if (!containerRef.current || !conflict) return;
+
+    // Cleanup function for the editor
+    const disposeEditor = () => {
+      if (editorRef.current) {
+        editorRef.current.dispose();
+        editorRef.current = null;
+      }
+    };
+
+    // Dispose any existing editor
+    disposeEditor();
+
+    setLoaded(false);
+
+    const editor = loadDefaultMonacoEditor(containerRef.current, { readOnly: mergeType !== MergeType.ANCESTOR });
+    // Create models for the diff editor
+    const originalModel = monaco.editor.createModel(
+      getConflictText(),
+      undefined,
+      monaco.Uri.parse(mergeType + selectedFile.old_path)
+    );
+
+    // Set the models to the editor
+    editor.setModel(null);
+    editor.setModel(originalModel);
+
+    // Add scroll listener
+    const scrollListener = editor.onDidScrollChange((e) => {
+      setScrollTop(e.scrollTop);
+      if (suppressScrollSyncRef.current) {
+        suppressScrollSyncRef.current = false;
+        return;
+      }
+
+      onScrollSync?.(getScrollSync(editor, e.scrollTop));
+    });
+
+    addChunkLineOverlayWidgets(editor);
+
+    editorRef.current = editor;
+    updateConflictHighlighting();
+    requestAnimationFrame(() => centerConflictWithoutSync(editor, conflictIndex - 1));
+    let ancestorListener: monaco.IDisposable | undefined = undefined;
+    if (mergeType === MergeType.ANCESTOR) {
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => {
+        // Do nothing on Ctrl/Cmd + Z
+      });
+
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => {
+        // Do nothing on Ctrl/Cmd + Y
+      });
+
+      ancestorListener = editor.onDidChangeModelContent((e) => handleAncestorChanges(e));
+    }
+
+    setLoaded(true);
+
+    return () => {
+      ancestorListener?.dispose();
+      disposeEditor();
+      originalModel.dispose();
+      scrollListener.dispose();
+    };
+  }, [selectedFile, conflict]);
+
+  //FOR CHUNK AND LINE TOGGLE EFFECTS
+  useEffect(() => {
+    if (!resolvedContent || !editorRef.current || mergeType !== MergeType.ANCESTOR) return;
+    const scrollTopBeforeEdits = editorRef.current.getScrollTop();
+
+    applyEdits(resolvedContent.deletes ?? []);
+    applyEdits(resolvedContent.adds ?? []);
+    setScrollTopWithoutSync(editorRef.current, scrollTopBeforeEdits);
+
+    if (resolvedContent.adds.length > 0 || resolvedContent.deletes.length > 0)
+      updateConflictHighlighting(resolvedContent.lineStatus);
+  }, [resolvedContent]);
+
+  const applyEdits = (operations: IEditOperation[]) => {
+    const model = editorRef.current.getModel();
+    const currentVersion = model.getVersionId();
+    if (operations.length <= 0) return;
+
+    const selection = editorRef.current.getSelection();
+    const edits: monaco.editor.IIdentifiedSingleEditOperation[] = operations.map((edit) => {
+      if (edit.isDeletingLine) {
+        const isFirstLine = edit.startLine === 1;
+        const endLineIsFirst = isFirstLine && edit.endLine === edit.startLine;
+        let range: monaco.IRange = new monaco.Range(
+          edit.startLine - (isFirstLine ? 0 : 1),
+          isFirstLine ? 1 : model.getLineMaxColumn(edit.startLine - 1),
+          endLineIsFirst ? edit.endLine + 1 : edit.endLine,
+          endLineIsFirst ? 1 : model.getLineMaxColumn(edit.endLine)
+        );
+
+        return {
+          range: range,
+          text: null
+        };
+      } else
+        return {
+          range: new monaco.Range(
+            edit.startLine,
+            edit.isReplacingChunk ? 1 : model.getLineMaxColumn(edit.startLine),
+            edit.endLine,
+            model.getLineMaxColumn(edit.endLine)
+          ),
+          text: edit.isReplacingChunk || edit.text === null ? edit.text : '\n' + edit.text
+        };
+    });
+    editorRef.current.setSelection(selection);
+    chunkSelectionVersionRef.current = currentVersion + 1;
+    editorRef.current.executeEdits(`Version${chunkSelectionVersionRef.current}`, edits);
+  };
+
+  const handleAncestorChanges = (e: monaco.editor.IModelContentChangedEvent) => {
+    const editor = editorRef.current;
+    setOutput?.(editor.getValue());
+
+    if (e.versionId === chunkSelectionVersionRef.current) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    let newStatuses = [...(resolvedContentRef.current?.lineStatus ?? [])];
+
+    e.changes.forEach((change) => {
+      const startLine = change.range.startLineNumber;
+      const endLine = change.range.endLineNumber;
+      const newLines = change.text.split('\n');
+      const linesAdded = newLines.length;
+      const linesRemoved = endLine - startLine + 1;
+      const netChange = linesAdded - linesRemoved;
+
+      console.table({ startLine, endLine, newLines, linesAdded, linesRemoved, netChange });
+
+      const getAncestorLinesByChunkIndex = (chunkIndex: number) => {
+        return newStatuses.flatMap((ls, index) => {
+          const isAncestor = ls.chunkInfo?.get(chunkIndex)?.mergeType === MergeType.ANCESTOR;
+
+          return isAncestor ? [{ ...ls, lineNumber: index + 1 } as LineStatusNumber] : [];
+        });
+      };
+
+      const getEligibleWithinRange = () => {
+        let ancestorChunksAdded = new Set<number>();
+        const lines = newStatuses.flatMap((ls, index) => {
+          const isWithinEdits = index + 1 >= startLine && index + 1 <= endLine;
+
+          let eligibleLines: LineStatusNumber[] = [];
+          ls.chunkInfo?.forEach((v, chunkIndex) => {
+            if (v.mergeType === MergeType.ANCESTOR && !ancestorChunksAdded.has(chunkIndex) && isWithinEdits) {
+              ancestorChunksAdded.add(chunkIndex);
+              eligibleLines.push(...getAncestorLinesByChunkIndex(chunkIndex));
+            } else if (isWithinEdits) {
+              eligibleLines.push({ ...ls, lineNumber: index + 1 });
+            }
+          });
+
+          if (!ls.chunkInfo && isWithinEdits) {
+            eligibleLines.push({ ...ls, lineNumber: index + 1 });
+          }
+
+          return eligibleLines;
+        });
+
+        return lines;
+      };
+
+      const mergeChunkLinesWithinRanges = (lineStatus: LineStatus) => {
+        if (!lineStatus.chunkInfo) lineStatus.chunkInfo = new Map<number, ChunkInfo>();
+
+        linesWithinRange.forEach((line) => {
+          line.chunkInfo?.forEach((v, chunkIndex) => {
+            if (!lineStatus.chunkInfo.has(chunkIndex)) {
+              lineStatus.chunkInfo.set(chunkIndex, { mergeType: v.mergeType, chunkLine: v.chunkLine });
+            }
+          });
+        });
+      };
+
+      //Check if changes instersect chunk boundaries
+      //If so mark the chunk lines all MODIFIED_ANCESTOR
+      const linesWithinRange = getEligibleWithinRange();
+      linesWithinRange.forEach((line) => {
+        newStatuses[line.lineNumber - 1].status = LineOrigin.MODIFIED;
+      });
+
+      //For no net change, just mark those lines as modified
+      if (netChange === 0) {
+        for (let i = startLine; i <= endLine; i++) {
+          const line = newStatuses[i - 1];
+          line.status = LineOrigin.MODIFIED;
+          mergeChunkLinesWithinRanges(line);
+        }
+      }
+      //For lines added, make sure to increase the new line statuses at the startLine - 1 index
+      else if (netChange > 0) {
+        const currStatus = newStatuses[startLine - 1];
+        const injectedStatuses: LineStatus[] = [];
+        for (let i = 0; i < netChange; i++) {
+          const ci = new Map<number, ChunkInfo>();
+          currStatus.chunkInfo?.forEach((v, chunkIndex) => {
+            ci.set(chunkIndex, { mergeType: v.mergeType, chunkLine: v.chunkLine });
+          });
+
+          let lineStatus: LineStatus = { status: LineOrigin.MODIFIED, chunkInfo: ci };
+          mergeChunkLinesWithinRanges(newStatuses[startLine - 1]);
+          injectedStatuses.push(lineStatus);
+        }
+
+        newStatuses.splice(startLine, 0, ...injectedStatuses);
+      }
+      //For removed lines, decrease newStatuses from start index removing abs value of removed lines
+      else if (netChange < 0) {
+        mergeChunkLinesWithinRanges(newStatuses[startLine - 1]);
+        newStatuses.splice(startLine, Math.abs(netChange));
+      }
+    });
+
+    setResolvedContent({ lineStatus: newStatuses, deletes: [], adds: [] });
+    updateConflictHighlighting(newStatuses);
+  };
+
+  const addChunkLineOverlayWidgets = (editor: monaco.editor.IStandaloneCodeEditor) => {
+    if (mergeType === MergeType.ANCESTOR) return;
+
+    let lineWidgets: LineOverlayWidget[] = [];
+    conflict.chunks.forEach((chunk, chunkIndex) => {
+      if (isBetweenLineChunk(chunk)) {
+        const lineWidget = new LineOverlayWidget({
+          lineHeight: editor.getOption(monaco.editor.EditorOption.lineHeight),
+          editor,
+          line: getStartLine(chunk),
+          mergeType,
+          handleLineToggle,
+          chunkIndex,
+          isBetweenLines: true
+        });
+        lineWidgets.push(lineWidget);
+        editor.addOverlayWidget(lineWidget);
+        return;
+      }
+
+      for (let line of getChunkLineNumbers(chunk)) {
+        const lineWidget = new LineOverlayWidget({
+          lineHeight: editor.getOption(monaco.editor.EditorOption.lineHeight),
+          editor,
+          line,
+          mergeType,
+          handleLineToggle,
+          chunkIndex
+        });
+        lineWidgets.push(lineWidget);
+        editor.addOverlayWidget(lineWidget);
+      }
+    });
+
+    setChunkLineWidgets(lineWidgets);
+  };
+
+  // Update getConflictText to use resolved content for ANCESTOR
+  const getConflictText = () => {
+    switch (mergeType) {
+      case MergeType.OURS:
+        return conflict.ours;
+      case MergeType.THEIRS:
+        return conflict.theirs;
+      case MergeType.ANCESTOR:
+        // Use resolved content if available, otherwise use original
+        return conflict.ancestor;
+      default:
+        return '';
+    }
+  };
+
+  const getStartLine = (chunk: ConflictChunk) => {
+    switch (mergeType) {
+      case MergeType.OURS:
+        return chunk.ours_start;
+      case MergeType.THEIRS:
+        return chunk.theirs_start;
+      case MergeType.ANCESTOR:
+        return chunk.ancestor_start;
+      default:
+        return 0;
+    }
+  };
+
+  const getEndLine = (chunk: ConflictChunk) => {
+    switch (mergeType) {
+      case MergeType.OURS:
+        return chunk.ours_end;
+      case MergeType.THEIRS:
+        return chunk.theirs_end;
+      case MergeType.ANCESTOR:
+        return chunk.ancestor_end;
+      default:
+        return 0;
+    }
+  };
+
+  const getChunkBounds = (chunk: ConflictChunk) => ({
+    startBoundary: getStartLine(chunk),
+    endBoundary: getEndLine(chunk)
+  });
+
+  const getChunkLineNumbers = (chunk: ConflictChunk) => {
+    const { startBoundary, endBoundary } = getChunkBounds(chunk);
+    if (startBoundary >= endBoundary) return [-startBoundary];
+
+    return Array.from({ length: endBoundary - startBoundary }, (_, i) => startBoundary + i + 1);
+  };
+
+  const isBetweenLineChunk = (chunk: ConflictChunk) => {
+    const { startBoundary, endBoundary } = getChunkBounds(chunk);
+    return startBoundary === endBoundary;
+  };
+
+  const getMergeBgColour = () => {
+    switch (mergeType) {
+      case MergeType.OURS:
+        return 'bg-violet-300 opacity-25';
+      case MergeType.THEIRS:
+        return 'bg-orange-300 opacity-25';
+      case MergeType.ANCESTOR:
+        return 'bg-teal-300 opacity-25';
+      default:
+        return '';
+    }
+  };
+
+  const updateConflictHighlighting = (lineStatus: LineStatus[] | undefined = undefined) => {
+    const model = editorRef.current?.getModel();
+    if (!model) return;
+
+    const totalLines = model.getLineCount();
+    const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+
+    if (mergeType === MergeType.ANCESTOR && lineStatus) {
+      // Per-line highlighting based on line origins
+      for (let line = 1; line <= totalLines; line++) {
+        const origin = lineStatus[line - 1]?.status;
+        let className = '';
+
+        if (origin === LineOrigin.OURS) className = 'bg-violet-300 opacity-25';
+        else if (origin === LineOrigin.THEIRS) className = 'bg-orange-300 opacity-25';
+        else if (origin === LineOrigin.ANCESTOR) className = 'bg-teal-300 opacity-25';
+        else if (origin === LineOrigin.MODIFIED) className = 'bg-slate-300 opacity-25';
+        // ORIGINAL => no highlight
+
+        if (className !== '') {
+          newDecorations.push({
+            range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
+            options: {
+              isWholeLine: true,
+              className: className
+            }
+          });
+        }
+      }
+    } else {
+      // fallback: original chunk highlighting for OURS/THEIRS panes
+      newDecorations.push(
+        ...conflict.chunks.flatMap((range) => {
+          const { startBoundary, endBoundary } = getChunkBounds(range);
+          if (startBoundary >= endBoundary) return [];
+
+          let startLine = startBoundary + 1;
+          const endLine = endBoundary;
+          const endColumn = model.getLineMaxColumn(endLine);
+
+          return [
+            {
+              range: new monaco.Range(startLine, 1, endLine, endColumn),
+              options: {
+                className: getMergeBgColour(),
+                isWholeLine: true
+              }
+            }
+          ];
+        })
+      );
+    }
+    // Apply new ones while removing only the previous batch
+    const ids = model.deltaDecorations(decorationIds.current, newDecorations);
+    decorationIds.current = ids;
+  };
+
+  const getCheckboxPosition = (chunk: ConflictChunk) => {
+    const { startBoundary, endBoundary } = getChunkBounds(chunk);
+    const lineHeight = editorRef.current?.getOption(monaco.editor.EditorOption.lineHeight) || 18;
+
+    const middleBoundary = startBoundary + (endBoundary - startBoundary) / 2;
+    const topPosition = middleBoundary * lineHeight - scrollTop - 8;
+
+    return topPosition;
+  };
+
+  const allLinesSelected = (chunk: ConflictChunk, chunkIndex: number) => {
+    const lines = getChunkLineNumbers(chunk);
+    if (lines.length === 0) {
+      return !resolvedContent.lineStatus.some((ls) => ls.chunkInfo?.has(chunkIndex));
+    }
+
+    for (let line of lines) {
+      if (
+        !resolvedContent.lineStatus.some(
+          (ls) =>
+            ls.chunkInfo?.get(chunkIndex)?.chunkLine === line && ls.status === convertMergeTypeToLineOrigin(mergeType)
+        )
+      )
+        return false;
+    }
+    return true;
+  };
+
+  return (
+    <>
+      {!loaded && <Loader2Icon className="flex w-full mx-auto animate-spin" />}
+
+      <div className="flex w-full h-full">
+        {/* Checkbox Overlay */}
+        {loaded && conflict && editorRef.current && showCheckboxes && (
+          <div
+            className="flex justify-center relative overflow-hidden"
+            style={{ height: `${height}px`, width: `${CHECKBOX_DIV_WIDTH}px` }}>
+            {conflict.chunks.map((chunk, index) => {
+              const position = getCheckboxPosition(chunk);
+              const isChecked = allLinesSelected(chunk, index);
+
+              return (
+                <div
+                  className="absolute"
+                  key={index}
+                  style={{
+                    top: `${position}px`
+                  }}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="w-4 h-4"
+                    onClick={() =>
+                      onChunkToggle(
+                        index,
+                        mergeType,
+                        !isChecked,
+                        editorRef.current.getValue(),
+                        resolvedContent.lineStatus
+                      )
+                    }>
+                    {!isChecked ? <SquareIcon className="w-4 h-4" /> : <SquareCheckIcon className="w-4 h-4" />}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {/* Monaco Editor Container */}
+        <div
+          className="monaco-container"
+          ref={containerRef}
+          style={{
+            height: `${height}px`,
+            width: `${width - (showCheckboxes ? CHECKBOX_DIV_WIDTH : 0)}px`,
+            display: loaded ? 'block' : 'none'
+          }}
+        />
+      </div>
+    </>
+  );
+};

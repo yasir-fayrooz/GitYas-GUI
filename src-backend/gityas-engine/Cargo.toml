@@ -1,0 +1,31 @@
+[package]
+name = "gityas-engine"
+description = "Application layer: Engine facade, active-repo session, watchers, scheduler, cache glue."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gityas-core.workspace = true
+gityas-git.workspace = true
+gityas-storage.workspace = true
+gityas-auth.workspace = true
+gityas-platform.workspace = true
+git2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+notify-debouncer-mini.workspace = true
+secrecy.workspace = true
+nanoid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

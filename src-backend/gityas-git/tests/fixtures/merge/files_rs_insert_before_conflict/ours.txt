@@ -1,0 +1,345 @@
+use crate::misc;
+use crate::misc::gityas_myers::{DiffHunk, EditType};
+use anyhow::Result;
+use git2::Diff;
+use gityas_domain::models::file::{
+    ConflictChunk, ConflictType, GitYasConflict, GitYasDelta, GitYasDeltaChange, GitYasDiff, GitYasHunk,
+};
+use std::cell::RefCell;
+use std::ops::Deref;
+use std::path::Path;
+
+pub fn get_commit_file_diff(
+    repo: &git2::Repository,
+    commit_id: Option<String>,
+    gityas_delta: GitYasDelta,
+    is_staged: Option<bool>,
+) -> Result<GitYasDiff> {
+    if let Some(commit_id) = commit_id.as_ref() {
+        return get_commit_diff(repo, commit_id, gityas_delta);
+    }
+
+    let is_staged = is_staged.unwrap_or(false);
+    let mut diff_opts = git2::DiffOptions::new();
+    diff_opts.context_lines(3).pathspec(gityas_delta.file_path.clone());
+
+    let (old_content, new_content, hunks) = if gityas_delta.change_type == GitYasDeltaChange::UNTRACKED {
+        let new_content = get_file_content_at_workdir(repo, &effective_path(&gityas_delta))
+            .unwrap_or_default();
+        (
+            String::new(),
+            new_content.clone(),
+            synthesize_hunks(&new_content),
+        )
+    } else if is_staged {
+        let head_tree = get_head_tree_or_empty(repo)?;
+        let index = repo.index()?;
+        let diff: Diff = repo.diff_tree_to_index(Some(&head_tree), Some(&index), Some(&mut diff_opts))?;
+
+        let old_content = get_file_content_at_tree(repo, &head_tree, &effective_old_path(&gityas_delta))
+            .unwrap_or_default();
+        let new_content = get_file_content_at_index(repo, &effective_new_path(&gityas_delta))
+            .unwrap_or_default();
+        (old_content, new_content, collect_hunks(&diff)?)
+    } else {
+        let diff: Diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
+
+        let old_content = get_file_content_at_index(repo, &effective_old_path(&gityas_delta))
+            .unwrap_or_default();
+        let new_content = get_file_content_at_workdir(repo, &effective_new_path(&gityas_delta))
+            .unwrap_or_default();
+        (old_content, new_content, collect_hunks(&diff)?)
+    };
+
+    Ok(GitYasDiff {
+        old_content,
+        new_content,
+        hunks,
+    })
+}
+
+fn get_commit_diff(
+    repo: &git2::Repository,
+    commit_id: &str,
+    gityas_delta: GitYasDelta,
+) -> Result<GitYasDiff> {
+    let commit = repo.find_commit(git2::Oid::from_str(commit_id)?)?;
+    let tree = commit.tree()?;
+    let mut diff_opts = git2::DiffOptions::new();
+    diff_opts.context_lines(3).pathspec(gityas_delta.file_path.clone());
+
+    let parent_tree = if commit.parent_count() > 0 {
+        commit.parent(0)?.tree()?
+    } else {
+        repo.find_tree(git2::Oid::from_str("4b825dc642cb6eb9a060e54bf8d69288fbee4904").unwrap())?
+    };
+
+    let diff: Diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), Some(&mut diff_opts))?;
+    let old_content =
+        get_file_content_at_tree(repo, &parent_tree, &effective_old_path(&gityas_delta)).unwrap_or_default();
+    let new_content = get_file_content_at_tree(repo, &tree, &effective_new_path(&gityas_delta)).unwrap_or_default();
+    let hunks = collect_hunks(&diff)?;
+
+    Ok(GitYasDiff {
+        old_content,
+        new_content,
+        hunks,
+    })
+}
+
+fn collect_hunks(diff: &Diff) -> Result<Vec<GitYasHunk>, git2::Error> {
+    let mut hunks = Vec::new();
+    let current_hunk = RefCell::new(None::<GitYasHunk>);
+
+    diff.foreach(
+        &mut |_, _| true,
+        None,
+        Some(&mut |_delta, hunk| {
+            if let Some(hunk) = current_hunk.borrow_mut().take() {
+                hunks.push(hunk);
+            }
+
+            *current_hunk.borrow_mut() = Some(GitYasHunk {
+                old_start: hunk.old_start(),
+                old_lines: hunk.old_lines(),
+                new_start: hunk.new_start(),
+                new_lines: hunk.new_lines(),
+            });
+            true
+        }),
+        None,
+    )?;
+
+    if current_hunk.borrow().deref().is_some() {
+        let hunk = current_hunk.borrow().clone().unwrap();
+        hunks.push(hunk);
+    }
+
+    Ok(hunks)
+}
+
+fn get_file_content_at_tree(
+    repo: &git2::Repository,
+    tree: &git2::Tree,
+    path: &str,
+) -> Result<String, git2::Error> {
+    match tree.get_path(Path::new(path)) {
+        Ok(entry) => {
+            let blob = repo.find_blob(entry.id())?;
+            let content = String::from_utf8_lossy(blob.content()).to_string();
+            Ok(content)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn get_file_content_at_index(repo: &git2::Repository, path: &str) -> Result<String, git2::Error> {
+    let index = repo.index()?;
+    match index.get_path(Path::new(path), 0) {
+        Some(entry) => {
+            let blob = repo.find_blob(entry.id)?;
+            let content = String::from_utf8_lossy(blob.content()).to_string();
+            Ok(content)
+        }
+        None => Err(git2::Error::from_str("Index entry not found")),
+    }
+}
+
+fn get_file_content_at_workdir(repo: &git2::Repository, path: &str) -> Result<String> {
+    // Get the absolute path to the file
+    let repo_workdir = repo.workdir().ok_or(git2::Error::from_str(
+        "Not a standard repository with a working directory",
+    ))?;
+    let absolute_file_path = repo_workdir.join(path);
+    // Read the file content directly from the filesystem
+    let content = std::fs::read_to_string(absolute_file_path)?;
+    Ok(content)
+}
+
+fn get_head_tree_or_empty(repo: &git2::Repository) -> Result<git2::Tree<'_>, git2::Error> {
+    match repo.head() {
+        Ok(head) => head.peel_to_tree(),
+        Err(err) if err.code() == git2::ErrorCode::UnbornBranch => repo.find_tree(
+            git2::Oid::from_str("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?,
+        ),
+        Err(err) => Err(err),
+    }
+}
+
+fn effective_old_path(delta: &GitYasDelta) -> String {
+    if delta.old_path.is_empty() {
+        delta.file_path.clone()
+    } else {
+        delta.old_path.clone()
+    }
+}
+
+fn effective_new_path(delta: &GitYasDelta) -> String {
+    if delta.new_path.is_empty() {
+        delta.file_path.clone()
+    } else {
+        delta.new_path.clone()
+    }
+}
+
+fn effective_path(delta: &GitYasDelta) -> String {
+    if !delta.new_path.is_empty() {
+        delta.new_path.clone()
+    } else {
+        delta.file_path.clone()
+    }
+}
+
+fn synthesize_hunks(content: &str) -> Vec<GitYasHunk> {
+    let line_count = content.lines().count() as u32;
+
+    if line_count == 0 {
+        Vec::new()
+    } else {
+        vec![GitYasHunk {
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: line_count,
+        }]
+    }
+}
+
+pub fn get_merge_conflict_by_path(
+    repo: &git2::Repository,
+    path: &String,
+) -> Result<GitYasConflict> {
+    let mut index = repo.index()?;
+    index.read(false)?;
+
+    let conflict = index.conflict_get(std::path::Path::new(path))?;
+
+    let ancestor = load_file_content_from_index_entry(conflict.ancestor, repo)
+        .ok_or(git2::Error::from_str("No ancestor found"))?;
+    let ours = load_file_content_from_index_entry(conflict.our, repo);
+    let theirs = load_file_content_from_index_entry(conflict.their, repo);
+
+    let mut deleted_file_return = GitYasConflict {
+        ancestor: ancestor.clone(),
+        ours: String::default(),
+        theirs: String::default(),
+        chunks: vec![],
+        ours_deleted: false,
+        theirs_deleted: false,
+        auto_resolved: false,
+    };
+
+    if ours.is_none() && theirs.is_none() {
+        deleted_file_return.auto_resolved = true;
+        return Ok(deleted_file_return);
+    }
+    if ours.is_none() {
+        deleted_file_return.ours_deleted = true;
+        return Ok(deleted_file_return);
+    }
+    if theirs.is_none() {
+        deleted_file_return.theirs_deleted = true;
+        return Ok(deleted_file_return);
+    }
+
+    let conflict = get_conflicts_by_files(ancestor, ours.unwrap(), theirs.unwrap())?;
+    Ok(conflict)
+}
+
+pub fn load_file_content_from_index_entry(
+    entry: Option<git2::IndexEntry>,
+    repo: &git2::Repository,
+) -> Option<String> {
+    if entry.is_none() {
+        return None;
+    }
+
+    let blob = repo.find_blob(entry.unwrap().id);
+
+    match blob {
+        Ok(blob) => Some(String::from_utf8_lossy(blob.content()).into_owned()),
+        Err(_) => Some(String::default()),
+    }
+}
+
+pub fn get_conflicts_by_files(
+    ancestor: String,
+    ours: String,
+    theirs: String,
+) -> Result<GitYasConflict> {
+    let ours_diffs: Vec<DiffHunk> =
+        misc::gityas_myers::myers_diff(ancestor.clone().as_str(), ours.clone().as_str())
+            .into_iter()
+            .filter(|c| c.edit_type != EditType::Equal)
+            .collect();
+    let theirs_diffs: Vec<DiffHunk> =
+        misc::gityas_myers::myers_diff(ancestor.clone().as_str(), theirs.clone().as_str())
+            .into_iter()
+            .filter(|c| c.edit_type != EditType::Equal)
+            .collect();
+
+    let merged = misc::gityas_merger::merge_non_conflicting_chunks(
+        ancestor.as_str(),
+        ours.as_str(),
+        theirs.as_str(),
+        ours_diffs,
+        theirs_diffs,
+    );
+    let conflict_count = merged.conflicts.len();
+
+    let conflict = GitYasConflict {
+        ancestor: merged.merged_text,
+        ours: ours,
+        theirs: theirs,
+        chunks: merged
+            .conflicts
+            .into_iter()
+            .map(|chunk| {
+                let (merged_ancestor_start, merged_ancestor_end) = chunk.merged_ancestor_range;
+                let (ours_start, ours_end) = chunk.ours_range;
+                let (theirs_start, theirs_end) = chunk.theirs_range;
+
+                ConflictChunk {
+                    conflict_type: ConflictType::Both,
+                    ours_start: if ours_start == 0 {
+                        ours_start
+                    } else {
+                        ours_start + 1
+                    },
+                    ours_end: if ours_start == ours_end && ours_end != 0 {
+                        ours_start + 1
+                    } else {
+                        ours_end
+                    },
+                    theirs_start: if theirs_start == 0 {
+                        theirs_start
+                    } else {
+                        theirs_start + 1
+                    },
+                    theirs_end: if theirs_start == theirs_end && theirs_end != 0 {
+                        theirs_start + 1
+                    } else {
+                        theirs_end
+                    },
+                    ancestor_start: if merged_ancestor_start == 0 {
+                        merged_ancestor_start
+                    } else {
+                        merged_ancestor_start + 1
+                    },
+                    ancestor_end: if merged_ancestor_start == merged_ancestor_end
+                        && merged_ancestor_end != 0
+                    {
+                        merged_ancestor_start + 1
+                    } else {
+                        merged_ancestor_end
+                    },
+                }
+            })
+            .collect(),
+        ours_deleted: false,
+        theirs_deleted: false,
+        auto_resolved: conflict_count == 0,
+    };
+
+    Ok(conflict)
+}

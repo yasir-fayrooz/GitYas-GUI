@@ -1,0 +1,184 @@
+# Builds, signs and packages a release on each OS with the same scripts used locally (scripts/release/), then puts
+# every installer, update bundle and latest.json on a **draft** GitHub release. Installed apps see the update only
+# once the draft is published (the updater reads releases/latest, which skips drafts). Setup: docs/releasing.md.
+#
+# Repository settings it reads (Settings -> Secrets and variables -> Actions):
+#   variable UPDATE_PUBKEY                contents of update.key.pub (compiled into the app)
+#   secret   UPDATE_PRIVATE_KEY           contents of update.key (signs the update bundles)
+#   secret   UPDATE_PRIVATE_KEY_PASSWORD  its password
+#   secret   APPLE_P12_BASE64             optional: Developer ID Application .p12, base64 (else signed ad hoc)
+#   secret   APPLE_P12_PASSWORD           optional: its password
+#   secret   APPLE_API_KEY_JSON           optional: App Store Connect API key JSON (notarization)
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 1.0.0 (tag v<version> must already be pushed)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPO: ${{ github.repository }}
+  UPDATE_PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        env:
+          REQUESTED: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          v="${REQUESTED#v}"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$REQUESTED' is not a version (x.y.z)"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            platforms: windows
+            tools: cargo-packager@0.11.8
+          - name: macos
+            os: macos-latest
+            platforms: macos-aarch64 macos-x86_64
+            tools: cargo-packager@0.11.8 apple-codesign@0.29.0
+          # The oldest supported runner: the Linux build itself targets glibc 2.31 through cargo-zigbuild.
+          - name: linux
+            os: ubuntu-22.04
+            platforms: linux
+            tools: cargo-packager@0.11.8 cargo-zigbuild@0.24.0
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/v${{ needs.version.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+
+      # Release tools, built once per version and cached.
+      - uses: actions/cache@v4
+        id: tools
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager*
+            ~/.cargo/bin/rcodesign*
+            ~/.cargo/bin/cargo-zigbuild*
+          key: release-tools-${{ runner.os }}-${{ matrix.tools }}
+      - name: Install release tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        env:
+          TOOLS: ${{ matrix.tools }}
+        run: for tool in $TOOLS; do cargo install --locked "$tool"; done
+
+      - name: Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools-ng
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'Linux'
+        with:
+          version: 0.15.2
+      - name: jq (Windows)
+        if: runner.os == 'Windows'
+        run: command -v jq || choco install jq -y --no-progress
+
+      - name: Signing keys
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+          UPDATE_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATE_PRIVATE_KEY_PASSWORD }}
+          APPLE_P12_BASE64: ${{ secrets.APPLE_P12_BASE64 }}
+          APPLE_P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+          APPLE_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
+        run: |
+          keys="$RUNNER_TEMP/keys"
+          mkdir -p "$keys"
+          [[ -n "$UPDATE_PRIVATE_KEY" ]] || { echo "::error::secret UPDATE_PRIVATE_KEY is not set"; exit 1; }
+          [[ -n "$UPDATE_PUBKEY" ]] || { echo "::error::variable UPDATE_PUBKEY is not set"; exit 1; }
+          printf '%s' "$UPDATE_PRIVATE_KEY" > "$keys/update.key"
+          {
+            echo "UPDATE_PRIVATE_KEY_PATH=$keys/update.key"
+            echo "UPDATE_PRIVATE_KEY_PASSWORD=$UPDATE_PRIVATE_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          if [[ "$RUNNER_OS" == macOS && -n "$APPLE_P12_BASE64" ]]; then
+            printf '%s' "$APPLE_P12_BASE64" | base64 --decode > "$keys/developer-id.p12"
+            {
+              echo "APPLE_P12_PATH=$keys/developer-id.p12"
+              echo "APPLE_P12_PASSWORD=$APPLE_P12_PASSWORD"
+            } >> "$GITHUB_ENV"
+            if [[ -n "$APPLE_API_KEY_JSON" ]]; then
+              printf '%s' "$APPLE_API_KEY_JSON" > "$keys/app-store-connect.json"
+              echo "APPLE_API_KEY_JSON=$keys/app-store-connect.json" >> "$GITHUB_ENV"
+            fi
+          fi
+
+      - name: Build and package
+        env:
+          PLATFORMS: ${{ matrix.platforms }}
+        run: bash scripts/release/release.sh --no-manifest "$VERSION" $PLATFORMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/v${{ needs.version.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove signing keys
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/v${{ needs.version.outputs.version }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist/v${{ needs.version.outputs.version }}
+
+      - name: Manifest (latest.json)
+        run: |
+          source scripts/release/lib.sh
+          bash scripts/release/prepare.sh "$VERSION" "dist/release-notes-$VERSION.md"
+          bash scripts/release/manifest.sh "$VERSION" "$(release_asset_base "$VERSION")" \
+            "dist/release-notes-$VERSION.md" "dist/v$VERSION"
+
+      - name: Draft GitHub release
+        run: bash scripts/release/publish-github.sh "$VERSION"

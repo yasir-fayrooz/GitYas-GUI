@@ -1,0 +1,7 @@
+# GitYas
+My own Git GUI
+
+#TEST
+
+
+WOW  testing this commit msg

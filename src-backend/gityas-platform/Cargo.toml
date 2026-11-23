@@ -1,0 +1,23 @@
+[package]
+name = "gityas-platform"
+description = "Data/cache/log directories, tracing init, open_url, single instance."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gityas-core.workspace = true
+directories.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+open.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

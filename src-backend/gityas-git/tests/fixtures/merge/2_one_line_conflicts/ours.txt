@@ -1,0 +1,481 @@
+import { useEffect, useRef, useState } from 'react';
+import useFilesStore from '@/stores/files-store';
+import { ConflictChunk, getFileIcon, GitYasConflict, statusColors } from '@/models/gityas-file';
+import { invoke } from '@tauri-apps/api/core';
+import { GET_MERGE_CONFLICT_BY_PATH, RESOLVE_CONFLICT } from '@/events/gityas-commands';
+import { toastError } from '@/components/toast';
+import { ArrowBigDown, ArrowBigUp, SaveIcon, XIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import useMainBarStore, { SelectedMainBar } from '@/stores/main-bar-store';
+import { MonacoMergeViewer, type MergeViewerScrollSync } from './monaco-merge-viewer';
+import { useElementSize } from '@/hooks/use-element-size';
+import {
+  ChunkInfo,
+  convertMergeTypeToLineOrigin,
+  IEditOperation,
+  IResolvedContent,
+  LineOrigin,
+  LineStatus,
+  LineStatusNumber,
+  MergeType,
+  SelectedChunk
+} from './types';
+
+export const MergeViewer = () => {
+  const { setSelectedMainBar } = useMainBarStore();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { height, width } = useElementSize(containerRef);
+
+  const { selectedFile, setSelectedFile } = useFilesStore();
+
+  const [mergeConflict, setMergeConflict] = useState<GitYasConflict | undefined>(undefined);
+  const [resolvedContent, setResolvedContent] = useState<IResolvedContent | undefined>(undefined);
+  const [output, setOutput] = useState<string>(undefined);
+
+  const [conflictIndex, setConflictIndex] = useState<number>(1);
+  const [scrollSync, setScrollSync] = useState<MergeViewerScrollSync | undefined>(undefined);
+  const scrollSyncVersionRef = useRef(0);
+
+  useEffect(() => {
+    setMergeConflict(undefined);
+    invoke<GitYasConflict>(GET_MERGE_CONFLICT_BY_PATH, { path: selectedFile.file_path })
+      .then((mergeConflict) => {
+        console.log(mergeConflict);
+        setMergeConflict(mergeConflict);
+      })
+      .catch((e) => {
+        toastError(e);
+        console.log(e);
+      });
+  }, [selectedFile]);
+
+  useEffect(() => {
+    if (mergeConflict) {
+      setResolvedContent({
+        lineStatus: getAncestorLineStatus(mergeConflict.ancestor.split('\n')),
+        deletes: [],
+        adds: []
+      });
+      setOutput(mergeConflict.ancestor);
+    }
+  }, [mergeConflict]);
+
+  const resetConflict = () => {
+    const mc = mergeConflict;
+    setMergeConflict(undefined);
+    setTimeout(() => setMergeConflict(mc), 20);
+  };
+
+  const onResolveConflict = async () => {
+    await invoke(RESOLVE_CONFLICT, { path: selectedFile.file_path, resolvedContent: output })
+      .then(() => {
+        setSelectedFile(undefined);
+      })
+      .catch((e) => {
+        toastError(<p>{e}</p>);
+      });
+  };
+
+  const handleScrollSync = (nextScrollSync: MergeViewerScrollSync) => {
+    scrollSyncVersionRef.current++;
+    setScrollSync({ ...nextScrollSync, version: scrollSyncVersionRef.current });
+  };
+
+  const handleLineToggle = (
+    chunkIndex: number,
+    line: number,
+    mergeType: MergeType,
+    isChecked: boolean,
+    modelValue: string,
+    lineStatus: LineStatus[]
+  ) => {
+    const newChunk: SelectedChunk = {
+      chunkIndex,
+      mergeType,
+      lineNumber: line
+    };
+    updateAncestorContent(chunkIndex, mergeType, isChecked, modelValue, [newChunk], lineStatus);
+  };
+
+  const handleChunkToggle = (
+    chunkIndex: number,
+    mergeType: MergeType,
+    isChecked: boolean,
+    modelValue: string,
+    lineStatus: LineStatus[]
+  ) => {
+    const ranges = getChunkLinesByMergeType(mergeConflict.chunks[chunkIndex], mergeType);
+    const newChunks: SelectedChunk[] = ranges.map((lineNumber) => {
+      const chunk: SelectedChunk = {
+        chunkIndex,
+        mergeType,
+        lineNumber
+      };
+      return chunk;
+    });
+    updateAncestorContent(chunkIndex, mergeType, isChecked, modelValue, newChunks, lineStatus);
+  };
+
+  const updateAncestorContent = (
+    chunkIndex: number,
+    mergeType: MergeType,
+    isChecked: boolean,
+    modelValue: string,
+    selections: SelectedChunk[],
+    lineStatus: LineStatus[]
+  ) => {
+    if (!mergeConflict) return;
+
+    let newStatuses: LineStatus[] = [...lineStatus];
+    let deletes: IEditOperation[] = [];
+    let adds: IEditOperation[] = [];
+
+    const status = convertMergeTypeToLineOrigin(mergeType);
+    const lines = getAllChunkIndexLines(chunkIndex, lineStatus);
+    const isOneSelection = selections.length === 1;
+    const linesByStatus = lines
+      .filter(
+        (ls) =>
+          ls.status === status &&
+          //For toggling lines
+          (isOneSelection ? ls.chunkInfo?.get(chunkIndex)?.chunkLine === selections[0].lineNumber : true)
+      )
+      .sort((a, b) => a.lineNumber - b.lineNumber);
+
+    deletes = getDeleteEdits(linesByStatus);
+    applyEditsOnLineStatuses(deletes, newStatuses);
+
+    //Add ancestor back if needed by comparing if we removed all chunk index lines
+    if (lines.length === linesByStatus.length) {
+      addBackAncestorChunk(chunkIndex, deletes, newStatuses);
+    }
+
+    //Add chunk index lines for that merge type if checked
+    if (isChecked) {
+      const index = findLastChunkIndex(chunkIndex, newStatuses);
+      const linesToReplace = getLinesToReplace(index, chunkIndex, newStatuses);
+      const isReplacingChunk = linesToReplace > 0;
+
+      const startIndexArr = index - Math.max(0, linesToReplace - 1);
+      const startLine = startIndexArr + 1;
+      const endLine = startIndexArr + 1 + Math.max(0, linesToReplace - 1);
+
+      const { newLineStatuses, newText } = getAddTextAndStatuses(chunkIndex, mergeType, selections, modelValue);
+
+      newStatuses.splice(isReplacingChunk ? startIndexArr : startLine, linesToReplace, ...newLineStatuses);
+      adds.push({
+        startLine: startLine,
+        endLine: endLine,
+        text: newText.join('\n'),
+        isReplacingChunk: isReplacingChunk
+      });
+    }
+
+    setResolvedContent({ lineStatus: newStatuses, deletes: deletes, adds: adds });
+  };
+
+  const applyEditsOnLineStatuses = (edits: IEditOperation[], newStatuses: LineStatus[]) => {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      const edit = edits[i];
+      newStatuses.splice(edit.startLine - 1, edit.endLine - edit.startLine + 1);
+    }
+  };
+
+  const getAddTextAndStatuses = (
+    chunkIndex: number,
+    mergeType: MergeType,
+    selections: SelectedChunk[],
+    modelValue: string
+  ) => {
+    let newText: string[] = [];
+    let newLineStatuses: LineStatus[] = [];
+
+    let lo: LineOrigin = LineOrigin.MODIFIED;
+    if (mergeType === MergeType.OURS) lo = LineOrigin.OURS;
+    if (mergeType === MergeType.THEIRS) lo = LineOrigin.THEIRS;
+    selections.forEach((selection) => {
+      const ci: Map<number, ChunkInfo> = new Map<number, ChunkInfo>();
+      ci.set(chunkIndex, { mergeType: mergeType, chunkLine: selection.lineNumber });
+      newLineStatuses.push({ status: lo, chunkInfo: ci });
+    });
+
+    let content = modelValue.split('\n');
+    if (mergeType === MergeType.OURS) content = mergeConflict.ours.split('\n');
+    if (mergeType === MergeType.THEIRS) content = mergeConflict.theirs.split('\n');
+    selections.forEach((selection) => {
+      const newLine = content[selection.lineNumber - 1];
+      newText.push(newLine);
+    });
+
+    return { newText, newLineStatuses };
+  };
+
+  const getDeleteEdits = (lines: LineStatusNumber[]): IEditOperation[] => {
+    if (lines.length === 0) return [];
+
+    let edits: IEditOperation[] = [];
+    let startLine = lines[0].lineNumber;
+    let prevLine = lines[0].lineNumber;
+
+    for (let i = 1; i <= lines.length; i++) {
+      const curr = lines[i]?.lineNumber;
+      const isNeighbour = curr === prevLine + 1;
+
+      if (!isNeighbour || i === lines.length) {
+        // Push current group
+        edits.push({
+          startLine,
+          endLine: prevLine,
+          text: null,
+          isDeletingLine: true
+        });
+
+        // Start a new group if there are more lines
+        if (curr !== undefined) {
+          startLine = curr;
+          prevLine = curr;
+        }
+      } else {
+        prevLine = curr!;
+      }
+    }
+
+    return edits;
+  };
+
+  const addBackAncestorChunk = (chunkIndex: number, deletes: IEditOperation[], newStatuses: LineStatus[]) => {
+    // Grab the ancestor chunk text from mergeConflict
+    const chunk = mergeConflict.chunks[chunkIndex];
+    const ancestorLines = mergeConflict.ancestor.split('\n');
+    const chunkLines = ancestorLines.slice(chunk.ancestor_start, chunk.ancestor_end);
+    deletes[0].text = chunkLines.join('\n');
+    deletes[0].isDeletingLine = false;
+    deletes[0].isReplacingChunk = true;
+
+    // Build line statuses for each restored line
+    const restoredStatuses: LineStatus[] = chunkLines.map((line, idx) => {
+      const ci = new Map<number, ChunkInfo>([
+        [chunkIndex, { mergeType: MergeType.ANCESTOR, chunkLine: chunk.ancestor_start + idx + 1 }]
+      ]);
+      return { status: LineOrigin.ANCESTOR, chunkInfo: ci };
+    });
+
+    // Insert those statuses back into the lineStatus array
+    newStatuses.splice(deletes[0].startLine - 1, 0, ...restoredStatuses);
+  };
+
+  const getAllChunkIndexLines = (
+    chunkIndex: number,
+    lineStatus: LineStatus[],
+    lineOrigin?: LineOrigin
+  ): LineStatusNumber[] => {
+    let lineStatusNums: LineStatusNumber[] = [];
+    lineStatus.forEach((ls, index) => {
+      if (!ls.chunkInfo || !ls.chunkInfo.has(chunkIndex)) return;
+      if (lineOrigin && ls.status !== lineOrigin) return;
+
+      lineStatusNums.push({ ...ls, lineNumber: index + 1 });
+    });
+
+    return lineStatusNums;
+  };
+
+  const getChunkLinesByMergeType = (chunk: ConflictChunk, mergeType: MergeType) => {
+    const range = (startBoundary: number, endBoundary: number) =>
+      startBoundary >= endBoundary
+        ? [-startBoundary]
+        : Array.from({ length: endBoundary - startBoundary }, (_, i) => startBoundary + i + 1);
+
+    switch (mergeType) {
+      case MergeType.OURS:
+        return range(chunk.ours_start, chunk.ours_end);
+      case MergeType.THEIRS:
+        return range(chunk.theirs_start, chunk.theirs_end);
+      case MergeType.ANCESTOR:
+        return range(chunk.ancestor_start, chunk.ancestor_end);
+      default:
+        return [];
+    }
+  };
+
+  const getAncestorLineStatus = (ancestorLines: string[]) => {
+    let newStatuses: LineStatus[] = Array.from({ length: ancestorLines.length }, (data, idx) => ({
+      status: LineOrigin.ORIGINAL
+    }));
+    mergeConflict.chunks.forEach((chunk, index) => {
+      const ranges = getChunkLinesByMergeType(chunk, MergeType.ANCESTOR);
+      ranges.forEach((lineNumber) => {
+        const chunkInfo = new Map<number, ChunkInfo>([[index, { mergeType: MergeType.ANCESTOR }]]);
+        newStatuses[lineNumber - 1] = {
+          status: LineOrigin.ANCESTOR,
+          chunkInfo: chunkInfo
+        };
+      });
+    });
+    return newStatuses;
+  };
+
+  const findLastChunkIndex = (chunkIndex: number, lineStatuses: LineStatus[]) => {
+    for (let i = lineStatuses.length - 1; i >= 0; i--) {
+      const ls = lineStatuses[i];
+      if (ls.chunkInfo && (ls.chunkInfo.has(chunkIndex) || [...ls.chunkInfo.keys()].some((k) => k < chunkIndex)))
+        return i;
+    }
+
+    return 0;
+  };
+
+  const getLinesToReplace = (index: number, chunkIndex: number, newStatuses: LineStatus[]) => {
+    let startIndex = index;
+    while (
+      index >= 0 &&
+      newStatuses[index].status === LineOrigin.ANCESTOR &&
+      newStatuses[index].chunkInfo?.has(chunkIndex)
+    )
+      index--;
+
+    return startIndex - index;
+  };
+
+  const onClose = () => {
+    setSelectedFile(undefined);
+    setSelectedMainBar(SelectedMainBar.COMMITS);
+  };
+
+  return (
+    <div className="flex flex-col w-full h-full overflow-hidden">
+      {/* HEADER */}
+      <div className="flex items-center p-2 bg-primary/5 border border-b-0 rounded-sm font-mono text-sm select-none">
+        {/* ICON CHANGE TYPE */}
+        <div className="me-1">{getFileIcon(selectedFile.change_type)}</div>
+
+        <div className="flex w-full truncate me-2">
+          {/* DIRECTORY PATH */}
+          <div title={selectedFile.file_path} className="truncate text-primary/50">
+            {selectedFile.directory}
+          </div>
+
+          {/* FILE NAME */}
+          <div className="font-bold whitespace-nowrap" title={selectedFile.file_path}>
+            {selectedFile.file_name}
+          </div>
+        </div>
+
+        {/* SAVE OUTPUT BUTTON */}
+        <div>
+          <Button
+            onClick={() => onResolveConflict()}
+            title="Save conflicted changes"
+            className={`mx-2 px-12 h-[26px] rounded-none text-primary bg-lime-300 hover:bg-lime-300/70 dark:bg-lime-600 dark:hover:bg-lime-600/70`}>
+            <div className="flex justify-center items-center gap-1">
+              <p className="text-xs">Save Output</p>
+              <SaveIcon className="w-4 h-4 text-primary/25" />
+            </div>
+          </Button>
+        </div>
+
+        {/* CHANGE TYPE BADGE */}
+        <div
+          className={`${statusColors[selectedFile.change_type]?.bg} text-xs ms-auto mx-2 font-bold text-primary px-1`}>
+          {selectedFile.change_type}
+        </div>
+
+        {/* EXIT BUTTON */}
+        <div className="flex my-auto">
+          <Button size="icon" className="w-5 h-5 rounded-xl" title="Close" onClick={onClose}>
+            <XIcon className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* MERGE CONFICT VIEW */}
+      <div className="flex flex-col h-full grow min-h-0" ref={containerRef}>
+        <div className="flex h-full">
+          <div className="grow">
+            <MonacoMergeViewer
+              conflict={mergeConflict}
+              selectedFile={selectedFile}
+              mergeType={MergeType.OURS}
+              height={height / 2 - 12}
+              width={width / 2}
+              showCheckboxes
+              onChunkToggle={handleChunkToggle}
+              handleLineToggle={handleLineToggle}
+              resolvedContent={resolvedContent}
+              setResolvedContent={setResolvedContent}
+              conflictIndex={conflictIndex}
+              scrollSync={scrollSync}
+              onScrollSync={handleScrollSync}
+            />
+          </div>
+
+          <div className="grow">
+            <MonacoMergeViewer
+              conflict={mergeConflict}
+              selectedFile={selectedFile}
+              mergeType={MergeType.THEIRS}
+              height={height / 2 - 12}
+              width={width / 2}
+              showCheckboxes
+              onChunkToggle={handleChunkToggle}
+              handleLineToggle={handleLineToggle}
+              resolvedContent={resolvedContent}
+              setResolvedContent={setResolvedContent}
+              conflictIndex={conflictIndex}
+              scrollSync={scrollSync}
+              onScrollSync={handleScrollSync}
+            />
+          </div>
+        </div>
+
+        {/* CENTER ACTION BUTTONS */}
+        <div className="flex justify-center h-[24px] w-full gap-2 relative">
+          <div className="flex items-center gap-1">
+            <Button
+              size="icon"
+              className="w-5 h-[24px] rounded-none"
+              disabled={conflictIndex <= 1}
+              onClick={() => setConflictIndex(conflictIndex - 1)}>
+              <ArrowBigUp className="w-4 h-4" />
+            </Button>
+            <p className="monospace text-xs select-none">
+              <strong>{conflictIndex}</strong> / <strong>{mergeConflict?.chunks.length}</strong>
+            </p>
+            <Button
+              size="icon"
+              className="w-5 h-[24px] rounded-none"
+              disabled={conflictIndex >= mergeConflict?.chunks.length}
+              onClick={() => setConflictIndex(conflictIndex + 1)}>
+              <ArrowBigDown className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="h-[22px] absolute right-0">
+            <Button className="h-full rounded-none" onClick={() => resetConflict()}>
+              Reset
+            </Button>
+          </div>
+        </div>
+
+        <div className="grow h-full">
+          {resolvedContent !== undefined && (
+            <MonacoMergeViewer
+              conflict={mergeConflict}
+              selectedFile={selectedFile}
+              mergeType={MergeType.ANCESTOR}
+              height={height / 2 - 12}
+              width={width}
+              resolvedContent={resolvedContent}
+              setResolvedContent={setResolvedContent}
+              conflictIndex={conflictIndex}
+              setOutput={setOutput}
+              scrollSync={scrollSync}
+              onScrollSync={handleScrollSync}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MergeViewer;

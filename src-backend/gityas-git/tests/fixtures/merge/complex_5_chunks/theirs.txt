@@ -1,0 +1,647 @@
+use std::collections::HashMap;
+use gityas_domain::models::file::{ConflictChunk, GitYasConflict};
+
+#[derive(Debug, Clone, PartialEq)]
+enum DiffType {
+    Equal,
+    Delete,
+    Insert,
+}
+
+#[derive(Debug, Clone)]
+struct DiffOperation {
+    op_type: DiffType,
+    a_index: i32,
+    b_index: i32,
+    line: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ChunkCategory {
+    AutoMerged,
+    ConflictingEdit,
+    OverlappingChange,
+    Deletion,
+    Move,
+}
+
+#[derive(Debug, Clone)]
+struct ChangeRegion {
+    ancestor_start: usize,
+    ancestor_end: usize,
+    our_start: usize,
+    our_end: usize,
+    their_start: usize,
+    their_end: usize,
+    our_changes: Vec<String>,
+    their_changes: Vec<String>,
+    is_conflict: bool,
+    category: ChunkCategory,
+}
+
+pub struct MergeAnalyzer<'a> {
+    conflict_data: &'a mut GitYasConflict,
+    context_expansion_threshold: usize,
+}
+
+impl<'a> MergeAnalyzer<'a> {
+    pub fn new(conflict_data: &'a mut GitYasConflict) -> Self {
+        Self {
+            conflict_data,
+            context_expansion_threshold: 3,
+        }
+    }
+
+    pub fn analyze_conflicts(&mut self) {
+        let ancestor_lines: Vec<String> = self.normalize_lines(&self.conflict_data.ancestor);
+        let our_lines: Vec<String> = self.normalize_lines(&self.conflict_data.ours);
+        let their_lines: Vec<String> = self.normalize_lines(&self.conflict_data.theirs);
+
+        // Compute diffs with whitespace-insensitive matching
+        let our_diff: Vec<DiffOperation> = self.compute_full_diff(&ancestor_lines, &our_lines);
+        let their_diff: Vec<DiffOperation> = self.compute_full_diff(&ancestor_lines, &their_lines);
+
+        // Identify change regions with proper line tracking
+        let mut regions = self.identify_change_regions(
+            &our_diff,
+            &their_diff,
+            &ancestor_lines,
+            &our_lines,
+            &their_lines,
+        );
+
+        // Apply smart merge heuristics (but preserve separate chunks)
+        // regions = self.apply_same_change_collapsing(regions);
+        // regions = self.apply_trivial_merge_resolution(regions);
+        // regions = self.collapse_deletion_gaps(regions);
+        // regions = self.apply_empty_chunk_suppression(regions);
+        //
+        // // Context expansion should only merge VERY close chunks
+        // regions = self.apply_smart_context_expansion(regions, &ancestor_lines);
+        //
+        // regions = self.apply_multi_chunk_collapsing(regions, &ancestor_lines);
+
+        // Generate final conflict chunks
+        let conflicts = self.generate_conflict_chunks(regions);
+
+        // Update conflict data (don't modify the original content)
+        self.conflict_data.chunks = conflicts;
+        self.conflict_data.ancestor = ancestor_lines.join("\n");
+    }
+
+    fn normalize_lines(&self, content: &str) -> Vec<String> {
+        content
+            .lines()
+            .map(|line| {
+                line.replace('\r', "").replace('\t', "    ").to_string()
+            })
+            .collect()
+    }
+
+    fn normalize_whitespace(&self, s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn lines_equal_ignoring_whitespace(&self, a: &str, b: &str) -> bool {
+        self.normalize_whitespace(a) == self.normalize_whitespace(b)
+    }
+
+    // Smart context expansion - only merge if there are actual shared context lines
+    fn apply_smart_context_expansion(
+        &self,
+        mut regions: Vec<ChangeRegion>,
+        ancestor_lines: &[String],
+    ) -> Vec<ChangeRegion> {
+        if regions.len() <= 1 {
+            return regions;
+        }
+
+        let mut merged_regions = Vec::new();
+        let mut current = regions[0].clone();
+
+        for next in regions.into_iter().skip(1) {
+            // Calculate the actual gap in the ancestor
+            let gap = next.ancestor_start.saturating_sub(current.ancestor_end + 1);
+
+            // Only merge if:
+            // 1. Gap is small (within threshold)
+            // 2. There are actual identical context lines in between
+            // 3. Both are conflicts (don't merge auto-merged with conflicts)
+            let should_merge = if gap > 0 && gap <= self.context_expansion_threshold {
+                // Check if the gap contains only identical lines
+                let gap_lines = ancestor_lines
+                    .get(current.ancestor_end + 1..next.ancestor_start)
+                    .unwrap_or(&[]);
+
+                // For now, be conservative - only merge if gap is 1 line
+                gap == 1 && !gap_lines.is_empty() && current.is_conflict && next.is_conflict
+            } else {
+                false
+            };
+
+            if should_merge {
+                current.ancestor_end = next.ancestor_end;
+                current.our_end = next.our_end;
+                current.their_end = next.their_end;
+                current.our_changes.extend(next.our_changes);
+                current.their_changes.extend(next.their_changes);
+                current.is_conflict = current.is_conflict || next.is_conflict;
+            } else {
+                merged_regions.push(current);
+                current = next;
+            }
+        }
+        merged_regions.push(current);
+
+        merged_regions
+    }
+
+    fn collapse_deletion_gaps(&self, mut regions: Vec<ChangeRegion>) -> Vec<ChangeRegion> {
+        for region in &mut regions {
+            if region.our_changes.is_empty() && !region.their_changes.is_empty() {
+                region.category = ChunkCategory::Deletion;
+            } else if !region.our_changes.is_empty() && region.their_changes.is_empty() {
+                region.category = ChunkCategory::Deletion;
+            }
+        }
+        regions
+    }
+
+    fn apply_trivial_merge_resolution(&self, mut regions: Vec<ChangeRegion>) -> Vec<ChangeRegion> {
+        for region in &mut regions {
+            if !region.is_conflict {
+                continue;
+            }
+
+            let our_normalized: Vec<_> = region
+                .our_changes
+                .iter()
+                .map(|l| self.normalize_whitespace(l))
+                .collect();
+            let their_normalized: Vec<_> = region
+                .their_changes
+                .iter()
+                .map(|l| self.normalize_whitespace(l))
+                .collect();
+
+            if our_normalized == their_normalized {
+                region.is_conflict = false;
+                region.category = ChunkCategory::AutoMerged;
+            }
+        }
+        regions
+    }
+
+    fn apply_same_change_collapsing(&self, mut regions: Vec<ChangeRegion>) -> Vec<ChangeRegion> {
+        regions.retain(|region| {
+            if region.our_changes == region.their_changes && !region.our_changes.is_empty() {
+                return false;
+            }
+            true
+        });
+        regions
+    }
+
+    fn apply_empty_chunk_suppression(&self, mut regions: Vec<ChangeRegion>) -> Vec<ChangeRegion> {
+        regions.retain(|region| {
+            if region.our_changes.is_empty() && region.their_changes.is_empty() {
+                return false;
+            }
+            true
+        });
+        regions
+    }
+
+    fn apply_multi_chunk_collapsing(
+        &self,
+        mut regions: Vec<ChangeRegion>,
+        _ancestor_lines: &[String],
+    ) -> Vec<ChangeRegion> {
+        // Only collapse if chunks are truly adjacent and overlapping
+        if regions.len() <= 1 {
+            return regions;
+        }
+
+        let mut merged_regions = Vec::new();
+        let mut current = regions[0].clone();
+
+        for next in regions.into_iter().skip(1) {
+            // Only merge if ancestor ranges are truly overlapping
+            let overlaps = current.ancestor_end >= next.ancestor_start.saturating_sub(1);
+
+            if overlaps && current.is_conflict == next.is_conflict {
+                current.ancestor_end = current.ancestor_end.max(next.ancestor_end);
+                current.our_end = current.our_end.max(next.our_end);
+                current.their_end = current.their_end.max(next.their_end);
+                current.our_changes.extend(next.our_changes);
+                current.their_changes.extend(next.their_changes);
+            } else {
+                merged_regions.push(current);
+                current = next;
+            }
+        }
+        merged_regions.push(current);
+
+        merged_regions
+    }
+
+    fn identify_change_regions(
+        &self,
+        our_diff: &[DiffOperation],
+        their_diff: &[DiffOperation],
+        ancestor_lines: &[String],
+        our_lines: &[String],
+        their_lines: &[String],
+    ) -> Vec<ChangeRegion> {
+        // Build sets of which ancestor lines are modified in each side
+        let our_modified: std::collections::HashSet<usize> = our_diff
+            .iter()
+            .filter(|op| op.op_type != DiffType::Equal)
+            .map(|op| op.a_index as usize)
+            .collect();
+
+        let their_modified: std::collections::HashSet<usize> = their_diff
+            .iter()
+            .filter(|op| op.op_type != DiffType::Equal)
+            .map(|op| op.a_index as usize)
+            .collect();
+
+        // Find all modified ancestor lines
+        let mut all_modified: Vec<usize> = our_modified
+            .union(&their_modified)
+            .copied()
+            .collect();
+        all_modified.sort();
+
+        if all_modified.is_empty() {
+            return Vec::new();
+        }
+
+        // Group into chunks separated by unchanged lines
+        let mut regions = Vec::new();
+        let mut chunk_start = all_modified[0];
+        let mut chunk_end = all_modified[0];
+
+        for &line_idx in all_modified.iter().skip(1) {
+            // If there's a gap of more than 1 line, or if the gap contains non-empty unchanged lines,
+            // start a new chunk
+            if line_idx > chunk_end + 1 {
+                // Check if there are non-empty lines in the gap
+                let has_content_in_gap = ((chunk_end + 1)..line_idx)
+                    .any(|i| {
+                        ancestor_lines.get(i).map(|s| !s.trim().is_empty()).unwrap_or(false)
+                    });
+
+                if has_content_in_gap || line_idx > chunk_end + 2 {
+                    // Finalize current chunk
+                    let (our_changes, our_range) = self.extract_changes_with_range(
+                        our_diff,
+                        our_lines,
+                        chunk_start,
+                        chunk_end,
+                    );
+                    let (their_changes, their_range) = self.extract_changes_with_range(
+                        their_diff,
+                        their_lines,
+                        chunk_start,
+                        chunk_end,
+                    );
+
+                    let is_conflict = !our_changes.is_empty()
+                        && !their_changes.is_empty()
+                        && our_changes != their_changes;
+
+                    let category = self.categorize_change(&our_changes, &their_changes, is_conflict);
+
+                    regions.push(ChangeRegion {
+                        ancestor_start: chunk_start,
+                        ancestor_end: chunk_end,
+                        our_start: our_range.0,
+                        our_end: our_range.1,
+                        their_start: their_range.0,
+                        their_end: their_range.1,
+                        our_changes,
+                        their_changes,
+                        is_conflict,
+                        category,
+                    });
+
+                    // Start new chunk
+                    chunk_start = line_idx;
+                    chunk_end = line_idx;
+                } else {
+                    // Extend current chunk
+                    chunk_end = line_idx;
+                }
+            } else {
+                // Consecutive or adjacent line
+                chunk_end = line_idx;
+            }
+        }
+
+        // Add the last chunk
+        let (our_changes, our_range) = self.extract_changes_with_range(
+            our_diff,
+            our_lines,
+            chunk_start,
+            chunk_end,
+        );
+        let (their_changes, their_range) = self.extract_changes_with_range(
+            their_diff,
+            their_lines,
+            chunk_start,
+            chunk_end,
+        );
+
+        let is_conflict = !our_changes.is_empty()
+            && !their_changes.is_empty()
+            && our_changes != their_changes;
+
+        let category = self.categorize_change(&our_changes, &their_changes, is_conflict);
+
+        regions.push(ChangeRegion {
+            ancestor_start: chunk_start,
+            ancestor_end: chunk_end,
+            our_start: our_range.0,
+            our_end: our_range.1,
+            their_start: their_range.0,
+            their_end: their_range.1,
+            our_changes,
+            their_changes,
+            is_conflict,
+            category,
+        });
+
+        regions
+    }
+
+    fn categorize_change(
+        &self,
+        our_changes: &[String],
+        their_changes: &[String],
+        is_conflict: bool,
+    ) -> ChunkCategory {
+        if !is_conflict && (!our_changes.is_empty() || !their_changes.is_empty()) {
+            ChunkCategory::AutoMerged
+        } else if is_conflict {
+            ChunkCategory::ConflictingEdit
+        } else {
+            ChunkCategory::AutoMerged
+        }
+    }
+
+    fn build_line_mapping(&self, diff: &[DiffOperation]) -> HashMap<usize, Vec<usize>> {
+        let mut map = HashMap::new();
+
+        for op in diff {
+            if op.op_type == DiffType::Insert {
+                let anc_line = op.a_index as usize;
+                let result_line = (op.b_index + 1) as usize;
+                map.entry(anc_line).or_insert_with(Vec::new).push(result_line);
+            }
+        }
+
+        map
+    }
+
+    fn group_changes_by_ancestor(&self, diff: &[DiffOperation]) -> Vec<(usize, usize)> {
+        let mut groups = Vec::new();
+        let mut current_start: Option<usize> = None;
+        let mut current_end: Option<usize> = None;
+
+        for op in diff {
+            if op.op_type == DiffType::Equal {
+                continue;
+            }
+
+            let anc_line = op.a_index as usize;
+
+            match current_start {
+                None => {
+                    current_start = Some(anc_line);
+                    current_end = Some(anc_line);
+                }
+                Some(_start) => {
+                    // Only group truly consecutive changes (no gap at all)
+                    // This ensures empty lines separate chunks
+                    if anc_line == current_end.unwrap() || anc_line == current_end.unwrap() + 1 {
+                        current_end = Some(anc_line.max(current_end.unwrap()));
+                    } else {
+                        groups.push((_start, current_end.unwrap()));
+                        current_start = Some(anc_line);
+                        current_end = Some(anc_line);
+                    }
+                }
+            }
+        }
+
+        if let Some(start) = current_start {
+            groups.push((start, current_end.unwrap()));
+        }
+
+        groups
+    }
+
+    fn extract_changes_with_range(
+        &self,
+        diff: &[DiffOperation],
+        result_lines: &[String],
+        anc_start: usize,
+        anc_end: usize,
+    ) -> (Vec<String>, (usize, usize)) {
+        let mut changes = Vec::new();
+        let mut line_numbers = Vec::new();
+
+        for op in diff {
+            let anc_line = op.a_index as usize;
+
+            if anc_line >= anc_start && anc_line <= anc_end {
+                match op.op_type {
+                    DiffType::Insert => {
+                        let result_line = (op.b_index) as usize;
+                        if result_line < result_lines.len() {
+                            changes.push(result_lines[result_line].clone());
+                            line_numbers.push(result_line + 1);
+                        }
+                    }
+                    DiffType::Delete => {
+                        // Track the position where deletion occurs
+                        let pos = (op.b_index + 1) as usize;
+                        line_numbers.push(pos);
+                    }
+                    DiffType::Equal => {}
+                }
+            }
+        }
+
+        let range = if line_numbers.is_empty() {
+            (1, 1)
+        } else {
+            let start = *line_numbers.iter().min().unwrap();
+            let end = *line_numbers.iter().max().unwrap();
+            (start, end)
+        };
+
+        (changes, range)
+    }
+
+    fn generate_conflict_chunks(&self, regions: Vec<ChangeRegion>) -> Vec<ConflictChunk> {
+        regions
+            .into_iter()
+            .enumerate()
+            .filter(|(_, region)| region.is_conflict)
+            .map(|(idx, region)| ConflictChunk {
+                id: format!("chunk-{}", idx),
+                start_line: region.ancestor_start + 1,
+                end_line: region.ancestor_end + 1,
+                our_start_line: region.our_start,
+                our_end_line: region.our_end,
+                their_start_line: region.their_start,
+                their_end_line: region.their_end,
+            })
+            .collect()
+    }
+
+    fn merge_change_ranges(
+        &self,
+        our_groups: Vec<(usize, usize)>,
+        their_groups: Vec<(usize, usize)>,
+    ) -> Vec<(usize, usize)> {
+        let mut all_ranges = Vec::new();
+        all_ranges.extend(our_groups);
+        all_ranges.extend(their_groups);
+
+        if all_ranges.is_empty() {
+            return Vec::new();
+        }
+
+        all_ranges.sort_by_key(|r| r.0);
+
+        let mut merged = Vec::new();
+        let mut current = all_ranges[0];
+
+        for range in all_ranges.iter().skip(1) {
+            // Only merge if ranges actually overlap or are immediately consecutive
+            // Don't merge ranges separated by gaps (empty lines)
+            if range.0 <= current.1 + 1 && range.0 > 0 && current.1 + 1 >= range.0 {
+                current.1 = current.1.max(range.1);
+            } else {
+                merged.push(current);
+                current = *range;
+            }
+        }
+        merged.push(current);
+
+        merged
+    }
+
+    fn compute_full_diff(&self, a: &[String], b: &[String]) -> Vec<DiffOperation> {
+        let trace = self.compute_myers_diff(a, b);
+        self.trace_to_diff(&trace, a, b)
+    }
+
+    fn compute_myers_diff(&self, a: &[String], b: &[String]) -> Vec<HashMap<i32, i32>> {
+        let n = a.len() as i32;
+        let m = b.len() as i32;
+        let max = n + m;
+        let mut v = HashMap::new();
+        let mut trace = Vec::new();
+
+        v.insert(1, 0);
+
+        for d in 0..=max {
+            let mut new_v = v.clone();
+            for k in (-d..=d).step_by(2) {
+                let x = if k == -d
+                    || (k != d && v.get(&(k - 1)).unwrap_or(&0) < v.get(&(k + 1)).unwrap_or(&0))
+                {
+                    *v.get(&(k + 1)).unwrap_or(&0)
+                } else {
+                    v.get(&(k - 1)).unwrap_or(&0) + 1
+                };
+
+                let mut y = x - k;
+                let mut x_mut = x;
+
+                // Use exact comparison for now - whitespace-insensitive can be too aggressive
+                while x_mut < n && y < m && a[x_mut as usize] == b[y as usize] {
+                    x_mut += 1;
+                    y += 1;
+                }
+
+                new_v.insert(k, x_mut);
+
+                if x_mut >= n && y >= m {
+                    trace.push(new_v);
+                    return trace;
+                }
+            }
+
+            trace.push(new_v.clone());
+            v = new_v;
+        }
+
+        trace
+    }
+
+    fn trace_to_diff(
+        &self,
+        trace: &[HashMap<i32, i32>],
+        a: &[String],
+        b: &[String],
+    ) -> Vec<DiffOperation> {
+        let mut x = a.len() as i32;
+        let mut y = b.len() as i32;
+        let mut diffs = Vec::new();
+
+        for d in (0..trace.len()).rev() {
+            let v = &trace[d];
+            let k = x - y;
+
+            let prev_k = if k == -(d as i32)
+                || (k != d as i32 && v.get(&(k - 1)).unwrap_or(&0) < v.get(&(k + 1)).unwrap_or(&0))
+            {
+                k + 1
+            } else {
+                k - 1
+            };
+
+            let prev_x = *v.get(&prev_k).unwrap_or(&0);
+            let prev_y = prev_x - prev_k;
+
+            while x > prev_x && y > prev_y {
+                diffs.push(DiffOperation {
+                    op_type: DiffType::Equal,
+                    a_index: x - 1,
+                    b_index: y - 1,
+                    line: a[(x - 1) as usize].clone(),
+                });
+                x -= 1;
+                y -= 1;
+            }
+
+            if d > 0 {
+                if x > prev_x {
+                    diffs.push(DiffOperation {
+                        op_type: DiffType::Delete,
+                        a_index: x - 1,
+                        b_index: y - 1,
+                        line: a[(x - 1) as usize].clone(),
+                    });
+                    x -= 1;
+                } else {
+                    diffs.push(DiffOperation {
+                        op_type: DiffType::Insert,
+                        a_index: x - 1,
+                        b_index: y - 1,
+                        line: b[(y - 1) as usize].clone(),
+                    });
+                    y -= 1;
+                }
+            }
+        }
+
+        diffs.reverse();
+        diffs
+    }
+}

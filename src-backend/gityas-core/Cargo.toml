@@ -1,0 +1,20 @@
+[package]
+name = "gityas-core"
+description = "Pure GitYas types: models, errors, events, providers, diff contracts. No IO."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+secrecy.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
