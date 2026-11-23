@@ -1,94 +1,182 @@
-# GitYas
+<p align="center">
+  <img src="src-frontend/assets/128x128@2x.png" width="96" alt="GitYas logo">
+</p>
 
-A free, offline-first, open-source Git GUI written in Rust: an [egui](https://github.com/emilk/egui) desktop app over
-a pure-Rust backend (libgit2 via `git2`, SQLite for settings and a commit-graph cache, the OS keychain for access
-tokens). No account, no WebView, no Node, and no `git` executable needed at runtime. Windows, macOS and Linux.
+<h1 align="center">GitYas</h1>
+
+<p align="center">
+  A fast, native Git GUI for Windows, macOS and Linux.<br>
+  Free, open source and offline first. Built in 100% Rust.
+</p>
+
+<p align="center">
+  <a href="https://getgityas.com"><b>Website</b></a> ·
+  <a href="#download"><b>Download</b></a> ·
+  <a href="#highlights"><b>Highlights</b></a> ·
+  <a href="#everything-it-does"><b>Everything it does</b></a> ·
+  <a href="docs/development.md"><b>Build from source</b></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/yasir-fayrooz/GitYas-GUI/releases/latest"><img src="https://img.shields.io/github/v/release/yasir-fayrooz/GitYas-GUI?label=release" alt="Latest GitYas release"></a>
+  <a href="https://github.com/yasir-fayrooz/GitYas-GUI/actions/workflows/ci.yml"><img src="https://github.com/yasir-fayrooz/GitYas-GUI/actions/workflows/ci.yml/badge.svg" alt="CI status on Windows, macOS and Linux"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <img src="src-frontend/tests/snapshots/main_window.png" alt="The GitYas main window: the changes panel, a commit graph with coloured branch lanes and tags, and the branch sidebar">
+</p>
+
+<p align="center">
+  No account, no sign-in, no tracking.<br>
+  GitYas only goes online to talk to your remotes and check for updates.
+</p>
+
+## Why GitYas
+
+- **Native, all the way down.** One Rust binary drawn on the GPU. No WebView, no Node, and no `git` executable needed:
+  libgit2 is linked in.
+- **Made for the keyboard.** Speed mode puts staging, committing and pushing one key away, from any app.
+- **Fits around your editor.** Drag a changed file straight into VS Code, JetBrains, Zed or any editor to open it.
+- **Merge conflicts on your terms.** Ours, theirs and the result are panes you arrange however you like.
+- **Yours.** MIT licensed, with no paid plan, no trial and no feature limits.
+
+## Highlights
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/speed-mode.gif" alt="Speed mode: a small GitYas panel in the corner over a code editor, going from its bar to the menu, the changes list and the commit box"><br>
+      <b>Speed mode.</b> GitYas shrinks to an always-on-top panel in the corner. Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>
+      from any app, then <kbd>C</kbd> to stage, <kbd>M</kbd> to commit, <kbd>P</kbd> to push. The focus goes back to
+      where you were typing.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/drag-to-editor.gif" alt="A changed file dragged from the GitYas Changes panel into a code editor, which opens it in a new tab"><br>
+      <b>Drag files into your editor.</b> Pull a changed file, or a whole selection, out of the Changes panel and drop
+      it on your editor to open it, or on a chat or folder to share or copy it. Windows and macOS.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="src-frontend/tests/snapshots/history_commit_selected.png" alt="Commit graph with a merge commit selected and its details in the side panel"><br>
+      <b>Every branch in one graph.</b> Each branch gets its own lane and colour, with local, remote and tag labels on
+      their commits. Stashes and work in progress sit on the graph too.
+    </td>
+    <td width="50%" valign="top">
+      <img src="src-frontend/tests/snapshots/diff_split.png" alt="A side-by-side diff with syntax highlighting and word-level changes"><br>
+      <b>Diffs three ways.</b> Read a change as a hunk, inline or side by side, with syntax highlighting and word-level
+      changes. Stage or unstage a single hunk.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="src-frontend/tests/snapshots/merge_layout_three_columns.png" alt="Merge conflict editor with ours, the result and theirs in three columns"><br>
+      <b>A merge editor you can rearrange.</b> Six layouts, from three columns to fully stacked. Drag a pane onto
+      another to split or swap them, pick lines from either side, and edit the result directly.
+    </td>
+    <td width="50%" valign="top">
+      <img src="src-frontend/tests/snapshots/merge_editor_layout_menu.png" alt="The merge editor's Layout menu with a live map of the panes and six presets"><br>
+      <b>Arrange panes from the Layout menu.</b> A live map of your panes sits above the presets. Drop a pane on an
+      edge to split, on its centre to swap, and reset any time.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="src-frontend/tests/snapshots/remote_push_dialog.png" alt="Push dialog choosing a remote and branch name for a new branch"><br>
+      <b>Push without the terminal.</b> Clone, fetch, pull and push over HTTPS or SSH. Personal access tokens for
+      GitHub, GitLab, Bitbucket and Azure DevOps stay in your system keychain.
+    </td>
+    <td width="50%" valign="top">
+      <img src="src-frontend/tests/snapshots/main_window_light.png" alt="The GitYas main window in the light theme"><br>
+      <b>Light, dark or system.</b> Pick a theme, zoom the whole interface, and keep separate profiles for work and
+      personal repositories.
+    </td>
+  </tr>
+</table>
+
+## Everything it does
+
+One line each here. Release notes for every version are in the [changelog](CHANGELOG.md).
+
+### History and the graph
+
+- A commit graph with branches, tags and stashes, each branch in its own coloured lane
+- Commit details: author, parents and message
+- Search commits by message, author or SHA
+- Checkout, branch, tag and reset straight from the graph
+- Local and remote branches, tags and stashes in a filterable sidebar
+
+### Changes and committing
+
+- Stage and unstage whole files or single hunks; stage or unstage everything at once
+- A path view and a tree view of your changes
+- Commit, stash with a message, pop, and discard changes
+- Drag files out of the Changes panel into your editor, a chat or a folder (Windows and macOS)
+- Your commit signature is filled in from your git config when none is set
+
+### Diffs
+
+- Hunk, inline and side-by-side views with syntax highlighting
+- Word-level highlights inside changed lines
+- Select diff text and copy it with or without the added or removed lines
+
+### Speed mode
+
+- A compact, always-on-top panel for the keyboard in the corner of your screen
+- A global shortcut (<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, <kbd>⌥</kbd><kbd>⇧</kbd><kbd>G</kbd> on a Mac) summons it from any app and hands the focus back afterwards
+- One key per action: changes, commit, push, pull, fetch, switch branch, new branch, stash, pop, tag
+- Stage, unstage and discard from the list, view a file's diff, commit or commit and push
+- The shortcut and every key can be changed in Settings → Git
+
+### Merge conflicts
+
+- A built-in three-way merge editor with six layouts, and panes you drag to split, swap and resize
+- Pick single lines or whole conflicts from either side, or edit the result by hand, with undo, redo and reset
+- Clear handling for binary, deleted, symlinked, submodule and very large files
+
+### Remotes
+
+- Clone, fetch, pull and push over HTTPS and SSH
+- Personal access tokens for GitHub, GitLab, Bitbucket and Azure DevOps, kept in the system keychain, or your existing git
+  credentials
+- SSH through your ssh-agent or your default keys, with host keys checked against `known_hosts`
+- Background fetch keeps your branches current; publish a new branch to any remote
+
+### Comfortable every day
+
+- Profiles: separate sets of repositories, settings, commit signature and credentials
+- Tabs for several repositories at once
+- Light, dark and system themes, and zoom
+- Automatic updates from GitHub Releases, checked against a signature before they install, with a **What's new** dialog
+  after each one
 
 ## Download
 
-Installers are on the [Releases](https://github.com/yasir-fayrooz/GitYas-GUI/releases/latest) page: the `-setup.exe`
-for Windows, the `.zip` (unzip and drag `GitYas.app` to Applications) for macOS, the `.AppImage` or `.deb` for Linux.
-Installed copies update themselves from the same page; each update is checked against a signing key built into the
-app before it installs.
+Get the latest version from the [Releases](https://github.com/yasir-fayrooz/GitYas-GUI/releases/latest) page or
+[getgityas.com](https://getgityas.com):
 
-If macOS says GitYas "could not be verified" on first launch, open **System Settings → Privacy & Security** and click
-**Open Anyway**.
+- **Windows:** the `-setup.exe`.
+- **macOS:** the `.zip` (Apple silicon or Intel). Unzip it and drag `GitYas.app` to Applications.
+- **Linux:** the `.AppImage`, or the `.deb` for Debian and Ubuntu.
 
-## Layout
+Installed copies update themselves from the same page. The Linux `.deb` shows a notice instead of updating itself.
 
-```
-src-frontend/            egui app (binary `gityas`), icons in assets/
-src-backend/
-  gityas-core/           shared types: models, errors, events, diff types
-  gityas-git/            git operations, merge engine, structured diffs
-  gityas-storage/        SQLite user DB and disposable cache DB
-  gityas-auth/           personal access tokens in the OS keychain
-  gityas-platform/       data / cache / log directories, logging, opening URLs
-  gityas-engine/         application layer the UI talks to
-docs/                    release guide
-scripts/check.sh         the CI gates
-scripts/release/         release builds (local and GitHub Actions)
-```
+- **macOS says GitYas "could not be verified"?** Open **System Settings → Privacy & Security** and click
+  **Open Anyway**. You only need to do this once.
 
-Dependency rule: `core ← git, storage, auth, platform ← engine ← frontend`.
+## Build from source
 
-## Build and run
-
-Rust 1.95 (pinned in `rust-toolchain.toml`). On Linux, install `libdbus-1-dev`, `libxkbcommon-dev`,
+You need Rust 1.95 (pinned in `rust-toolchain.toml`). On Linux, install `libdbus-1-dev`, `libxkbcommon-dev`,
 `libssl-dev` and `pkg-config` first.
 
 ```bash
 cargo run -p gityas-frontend
 ```
 
-`-- --mock` runs against built-in mock data with an in-memory engine (no keychain, no data directory).
-
-**macOS keychain prompts.** Cargo signs builds ad hoc, so after every rebuild the keychain treats GitYas as a new app
-and asks for your password once per saved token. Run `scripts/macos-dev-identity.sh` once: it creates a local
-self-signed "GitYas Dev" code-signing certificate, and `cargo run` (through the runner in `.cargo/config.toml`) then
-signs every build with it. Answer "Always Allow" once per item and the prompts stop. (Keychain Access → Certificate
-Assistant → Create a Certificate…, name "GitYas Dev", type Code Signing, works too.) Released builds need the Developer
-ID signing in `docs/releasing.md` §5 for the same reason.
-
-## Test
-
-```bash
-cargo test --workspace
-```
-
-The egui snapshot tests need a GPU and are ignored by default:
-
-```bash
-cargo test -p gityas-frontend -- --ignored
-```
-
-Set `UPDATE_SNAPSHOTS=1` to regenerate the reference images in `src-frontend/tests/snapshots/`.
-
-`scripts/check.sh` runs formatting, clippy, the tests and the dependency rule; CI runs it on Windows, macOS and
-Linux. `CHECK_SKIP_TESTS=1` skips the tests.
-
-## Package
-
-With [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) (`cargo install cargo-packager --locked`):
-
-```bash
-cargo packager --release -p gityas-frontend -f nsis
-```
-
-Formats: `nsis` (setup .exe) on Windows, `app,dmg` on macOS, `deb,appimage` on Linux. Releases are built by GitHub
-Actions when a `v*` tag is pushed and published as GitHub Releases, which the app's auto-updater reads. The same
-scripts work locally: `scripts/release/release.sh <version>` builds Windows natively, cross-compiles macOS and Linux
-with cargo-zigbuild, code-signs (rcodesign for macOS) and packages all of them into `dist/v<version>/` with the
-auto-updater manifest, and `scripts/release/publish-github.sh <version>` uploads them to a draft release. Release
-notes live in [CHANGELOG.md](CHANGELOG.md) and appear in the app after an update. Setup and the release checklist:
-[docs/releasing.md](docs/releasing.md).
-
-## Git hosting credentials
-
-Remotes authenticate over HTTPS with personal access tokens (GitHub, GitLab, Bitbucket, Azure DevOps), set in
-Settings and stored in the OS keychain, or with your existing git credentials. SSH remotes use the ssh-agent, then
-the default keys in `~/.ssh` that have no passphrase; host keys are checked against `~/.ssh/known_hosts`.
+Add `-- --mock` to run against built-in mock data. The code layout, tests, packaging and releases are covered in
+[docs/development.md](docs/development.md) and [docs/releasing.md](docs/releasing.md).
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE). Issues and pull requests are welcome.

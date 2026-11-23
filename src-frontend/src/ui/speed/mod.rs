@@ -1816,6 +1816,44 @@ mod tests {
         assert_eq!(t.app().speed.screen(), Screen::Changes);
     }
 
+    /// The panel at its real size, for the README and the website.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn snapshot_speed_mode() {
+        let mut t = TestApp::mock_gpu();
+        t.harness.step();
+        t.harness.set_size(egui::vec2(WIDTH, EXPANDED_HEIGHT));
+        let ctx = t.harness.ctx.clone();
+        summon(&ctx, t.app());
+        for _ in 0..3 {
+            t.harness.step();
+        }
+        t.snapshot("speed_menu");
+        press(&mut t, Key::C);
+        for _ in 0..3 {
+            t.harness.step();
+        }
+        t.snapshot("speed_changes");
+        press(&mut t, Key::Escape);
+        press(&mut t, Key::M);
+        for _ in 0..3 {
+            t.harness.step();
+        }
+        t.snapshot("speed_commit");
+        press(&mut t, Key::Escape);
+        press(&mut t, Key::Escape);
+        assert!(t.app().speed.collapsed());
+        for _ in 0..5 {
+            t.harness.step();
+        }
+        let bar = t.app().speed.bar_height.unwrap_or(COLLAPSED_HEIGHT);
+        t.harness.set_size(egui::vec2(WIDTH, bar));
+        for _ in 0..3 {
+            t.harness.step();
+        }
+        t.snapshot("speed_bar");
+    }
+
     #[test]
     fn the_summon_shortcut_works_in_the_window_when_not_system_wide() {
         let mut t = TestApp::mock();
