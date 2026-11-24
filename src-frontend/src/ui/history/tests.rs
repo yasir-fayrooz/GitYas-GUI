@@ -2,7 +2,7 @@
 //! (git2 fixtures), plus a mock-mode smoke test. FSEvents does not work in the sandbox, so fixtures changed with git2
 //! are followed by `engine.refresh(..)`.
 
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use gityas_core::diff::DiffTarget;
 use gityas_core::models::Head;
 use gityas_engine::Refresh;
@@ -888,4 +888,116 @@ fn a_pill_jumps_back_to_head_once_it_is_scrolled_out_of_view() {
     t.harness.step();
     t.harness.step();
     assert!(t.harness.query_by_label(JUMP).is_none(), "HEAD is back in view");
+}
+
+// ---- worktrees ------------------------------------------------------------------------------------------------
+
+fn worktree_count(app: &crate::app::GitYasApp) -> Option<usize> {
+    app.store.repo.as_ref().filter(|r| r.loaded.worktrees).map(|r| r.worktrees.len())
+}
+
+/// Accessible label of a worktree row in the sidebar.
+fn worktree_label(t: &mut TestApp, folder: &str) -> String {
+    let repo = t.app().store.repo.as_ref().unwrap_or_else(|| panic!("repo"));
+    let wt = repo
+        .worktrees
+        .iter()
+        .find(|w| w.folder_name() == folder)
+        .unwrap_or_else(|| panic!("no worktree {folder}"));
+    let kind = if wt.is_main() { "main worktree" } else { "worktree" };
+    format!("{kind} {folder} ({})", wt.path.display())
+}
+
+/// Fills the Add worktree dialog with a new branch and a folder, then submits it.
+fn add_worktree(t: &mut TestApp, branch: &str, folder: &std::path::Path, open_after: bool) {
+    super::worktree_dialog::open(t.app(), None);
+    t.harness.step();
+    let dialog = t.app().history_ui.add_worktree.as_mut().unwrap_or_else(|| panic!("dialog"));
+    assert!(dialog.new_branch);
+    dialog.name = branch.into();
+    dialog.folder = folder.display().to_string();
+    dialog.open_after = open_after;
+    t.harness.step();
+    button(t, "Add worktree");
+}
+
+#[test]
+fn add_a_worktree_then_remove_it_with_force_from_the_sidebar() {
+    let mut t = TestApp::engine();
+    let (dir, _repo) = temp_repo();
+    let elsewhere = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let wt_path = elsewhere.path().join("wt");
+    t.add_and_open(dir.path());
+    t.settle_until("main worktree listed", |app| worktree_count(app) == Some(1));
+
+    add_worktree(&mut t, "feature/wt", &wt_path, false);
+    t.settle_until("worktree added", |app| {
+        app.history_ui.add_worktree.is_none() && worktree_count(app) == Some(2)
+    });
+    assert!(wt_path.join("README.md").is_file());
+    assert!(has_local(&mut t, "feature/wt"));
+    // Its branch can't be checked out in another worktree.
+    branches(&mut t);
+    let label = worktree_label(&mut t, "wt");
+    t.harness.get_by_label(&label);
+
+    // Changes in it: removing asks again with "Force remove".
+    std::fs::write(wt_path.join("wip.txt"), "wip\n").unwrap_or_else(|e| panic!("{e}"));
+    context_click(&mut t, &label, "Remove wt…");
+    assert!(t.app().confirm.as_ref().is_some_and(|c| c.body.starts_with("Remove worktree wt?")));
+    button(&mut t, "Remove worktree");
+    t.settle_until("force confirmation", |app| {
+        app.confirm.as_ref().is_some_and(|c| c.action == "Force remove")
+    });
+    assert!(wt_path.exists());
+    t.harness.step();
+    button(&mut t, "Force remove");
+    t.settle_until("worktree removed", |app| worktree_count(app) == Some(1));
+    assert!(!wt_path.exists());
+    assert!(has_local(&mut t, "feature/wt"), "the branch is kept");
+}
+
+#[test]
+fn adding_a_worktree_can_open_it_in_a_new_tab() {
+    let mut t = TestApp::engine();
+    let (dir, _repo) = temp_repo();
+    let elsewhere = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let wt_path = elsewhere.path().join("opened");
+    t.add_and_open(dir.path());
+    t.settle_until("main worktree listed", |app| worktree_count(app) == Some(1));
+
+    add_worktree(&mut t, "opened", &wt_path, true);
+    t.settle_until("worktree registered", |app| app.store.repositories.len() == 2);
+    let canonical = std::fs::canonicalize(&wt_path).ok();
+    t.settle_until("worktree is the active repository", |app| {
+        let active = app.store.active.as_ref().and_then(|id| app.store.repository(id));
+        active.is_some_and(|r| std::fs::canonicalize(&r.path).ok() == canonical)
+    });
+    t.settle_until("its worktree list", |app| {
+        app.store
+            .repo
+            .as_ref()
+            .is_some_and(|r| r.worktrees.iter().any(|w| w.is_current && !w.is_main()))
+    });
+    assert_eq!(t.app().store.open_tabs.open.len(), 2);
+    // From the worktree, the main one can't be removed and the open one neither.
+    branches(&mut t);
+    let main = dir.path().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let label = worktree_label(&mut t, &main);
+    t.harness.get_by_label(&label).click_secondary();
+    t.harness.step();
+    t.harness.step();
+    let remove = format!("Remove {main}…");
+    assert!(t.harness.get_by_label(&remove).accesskit_node().is_disabled());
+}
+
+#[test]
+fn local_branch_menu_offers_a_new_worktree_for_free_branches() {
+    let mut t = TestApp::mock();
+    t.harness.step();
+    context_click(&mut t, "feature/egui-frontend", "Check out in new worktree…");
+    let dialog = t.app().history_ui.add_worktree.as_ref().unwrap_or_else(|| panic!("dialog"));
+    assert!(!dialog.new_branch);
+    assert_eq!(dialog.existing.as_deref(), Some("refs/heads/feature/egui-frontend"));
+    assert!(dialog.folder.ends_with("git-yas-feature-egui-frontend"), "{}", dialog.folder);
 }

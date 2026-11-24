@@ -462,6 +462,7 @@ async fn open_emits_selection_then_full_state_and_records_the_tab() {
             "RemotesUpdated",
             "GitFilesChanged",
             "StashesUpdated",
+            "WorktreesUpdated",
             "RepoStatusUpdated"
         ]
     );
@@ -482,7 +483,7 @@ async fn open_emits_selection_then_full_state_and_records_the_tab() {
     let again = t.engine.inner.sessions.require().unwrap();
     assert_eq!(again.generation, ctx.generation);
     assert!(!ctx.is_cancelled());
-    assert_eq!(names(&t.sink.take()).len(), 9);
+    assert_eq!(names(&t.sink.take()).len(), 10);
 
     t.engine.close_repository().await.unwrap();
     assert!(ctx.is_cancelled());

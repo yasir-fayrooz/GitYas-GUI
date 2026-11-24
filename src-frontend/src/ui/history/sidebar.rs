@@ -1,9 +1,9 @@
-//! Refs sidebar (the Branches panel pinned on the right; its TAGS / STASHES rows also fill the context bar's popups): "Create branch", filter box and collapsible LOCAL / REMOTE / TAGS / STASHES sections. Section and folder
+//! Refs sidebar (the Branches panel pinned on the right; its TAGS / STASHES rows also fill the context bar's popups): "Create branch", filter box and collapsible LOCAL / REMOTE / TAGS / STASHES / WORKTREES sections. Section and folder
 //! open state persist in egui memory (keyed by section and folder path).
 
 use egui::{Align2, Color32, FontId, Margin, Rect, RichText, Sense, Ui, WidgetInfo, WidgetType};
 use egui_phosphor::regular as icon;
-use gityas_core::models::{Branch, StashDetails};
+use gityas_core::models::{Branch, StashDetails, Worktree};
 
 use super::menus::{self, MenuCtx};
 use super::model::{TagRow, TreeRow, ahead_behind, filter_matches, folder_rows, tag_rows};
@@ -48,6 +48,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut GitYasApp) -> Vec<Intent> {
             remote_section(ui, p, repo, &tab.history, &ctx, &mut out);
             tags_section(ui, p, repo, &tab.history, &tab.history.filter, &ctx, true, &mut out);
             stash_section(ui, p, repo, &tab.history.filter, &selection, true, &mut out);
+            worktree_section(ui, p, repo, &tab.history.filter, &ctx, &mut out);
         });
     });
     out
@@ -713,6 +714,165 @@ fn stash_section(ui: &mut Ui, p: &Palette, repo: &RepoData, filter: &str, select
             if menus::item(ui, "Delete…", None) {
                 out.push(Intent::DeleteStash(id.clone()));
             }
+        });
+    }
+}
+
+/// Why "Add worktree…" is unavailable, if it is.
+fn add_worktree_disabled(repo: &RepoData, ctx: &MenuCtx) -> Option<&'static str> {
+    if ctx.unborn {
+        Some("No commits yet")
+    } else if !repo.loaded.worktrees {
+        Some("Loading…")
+    } else {
+        None
+    }
+}
+
+/// WORKTREES: the main worktree and the linked ones (`git worktree list`). Click shows the commit a worktree is on,
+/// double-click opens it in a tab.
+fn worktree_section(ui: &mut Ui, p: &Palette, repo: &RepoData, filter: &str, ctx: &MenuCtx, out: &mut Vec<Intent>) {
+    let worktrees: Vec<&Worktree> = repo
+        .worktrees
+        .iter()
+        .filter(|w| filter_matches(&w.folder_name(), filter) || w.branch.as_deref().is_some_and(|b| filter_matches(b, filter)))
+        .collect();
+    let plus = Plus {
+        tooltip: "Add worktree…",
+        disabled: add_worktree_disabled(repo, ctx),
+    };
+    let (open, plus_clicked) = section(ui, p, icon::TREE_STRUCTURE, "WORKTREES", worktrees.len(), Some(plus));
+    if plus_clicked {
+        out.push(Intent::AddWorktree(None));
+    }
+    if !open {
+        return;
+    }
+    if worktrees.is_empty() {
+        let text = if !filter.trim().is_empty() {
+            "No matches"
+        } else if !repo.loaded.worktrees {
+            "Loading…"
+        } else {
+            "No worktrees"
+        };
+        return empty_line(ui, p, text);
+    }
+    for wt in worktrees {
+        worktree_row(ui, p, wt, ctx, out);
+    }
+}
+
+fn worktree_row(ui: &mut Ui, p: &Palette, wt: &Worktree, ctx: &MenuCtx, out: &mut Vec<Intent>) {
+    let folder = wt.folder_name();
+    let mut trailing = Vec::new();
+    if wt.prunable {
+        trailing.push(Trailing {
+            text: icon::WARNING.to_owned(),
+            color: p.orange,
+            tooltip: Some("Its folder is missing; remove it to prune what git still keeps".to_owned()),
+        });
+    }
+    if wt.locked {
+        trailing.push(Trailing {
+            text: icon::LOCK_SIMPLE.to_owned(),
+            color: p.text_faint,
+            tooltip: Some(match &wt.lock_reason {
+                Some(reason) => format!("Locked: {reason}"),
+                None => "Locked".to_owned(),
+            }),
+        });
+    }
+    let on = match (&wt.branch, &wt.head) {
+        (Some(branch), _) => branch.clone(),
+        (None, Some(head)) => head.short(7),
+        (None, None) => String::new(),
+    };
+    if !on.is_empty() {
+        trailing.push(Trailing {
+            text: on.clone(),
+            color: p.text_muted,
+            tooltip: Some(if wt.branch.is_some() {
+                format!("On branch {on}")
+            } else {
+                format!("Detached at {on}")
+            }),
+        });
+    }
+    let kind = if wt.is_main() { "main worktree" } else { "worktree" };
+    let label = format!("{kind} {folder} ({})", wt.path.display());
+    let resp = row(
+        ui,
+        p,
+        RowSpec {
+            depth: 0,
+            glyph: if wt.is_current { icon::CHECK } else { icon::TREE_STRUCTURE },
+            glyph_color: if wt.is_current { p.green } else { p.text_muted },
+            text: &folder,
+            label: &label,
+            active: wt.is_current,
+            muted: wt.prunable,
+            trailing,
+        },
+    );
+    if resp.double_clicked() {
+        if !wt.is_current && !wt.prunable {
+            out.push(Intent::OpenWorktree(wt.path.clone()));
+        }
+    } else if resp.clicked()
+        && let Some(head) = &wt.head
+    {
+        out.push(Intent::Reveal(head.clone()));
+    }
+    resp.context_menu(|ui| worktree_menu(ui, wt, &folder, ctx, out));
+}
+
+fn worktree_menu(ui: &mut Ui, wt: &Worktree, folder: &str, ctx: &MenuCtx, out: &mut Vec<Intent>) {
+    let open_disabled = if wt.is_current {
+        Some("Already open")
+    } else if wt.prunable {
+        Some("Its folder is missing")
+    } else {
+        None
+    };
+    if menus::item(ui, "Open in new tab", open_disabled) {
+        out.push(Intent::OpenWorktree(wt.path.clone()));
+    }
+    if menus::item(ui, crate::platform_ui::REVEAL_LABEL, wt.prunable.then_some("Its folder is missing")) {
+        out.push(Intent::RevealPath(wt.path.clone()));
+    }
+    if menus::item(ui, "Copy path", None) {
+        ui.ctx().copy_text(wt.path.display().to_string());
+    }
+    if let Some(branch) = &wt.branch
+        && menus::item(ui, "Copy branch name", None)
+    {
+        ui.ctx().copy_text(branch.clone());
+    }
+    ui.separator();
+    if menus::item(ui, "Add worktree…", ctx.unborn.then_some("No commits yet")) {
+        out.push(Intent::AddWorktree(None));
+    }
+    let remove_disabled = if wt.is_main() {
+        Some("The main worktree can't be removed")
+    } else if wt.is_current {
+        Some("Open another worktree to remove this one")
+    } else {
+        None
+    };
+    let label = if wt.prunable {
+        format!("Prune {folder}…")
+    } else {
+        format!("Remove {folder}…")
+    };
+    if menus::item(ui, &label, remove_disabled)
+        && let Some(name) = &wt.name
+    {
+        out.push(Intent::RemoveWorktree {
+            name: name.clone(),
+            folder: folder.to_owned(),
+            locked: wt.locked,
+            prunable: wt.prunable,
         });
     }
 }

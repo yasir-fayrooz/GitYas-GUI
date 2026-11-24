@@ -2,12 +2,13 @@
 //! feedback (toasts, confirmations). Store state is never updated here: the engine's refresh events do that.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use gityas_core::models::{ResetMode, StashApplyOutcome};
-use gityas_core::{GitYasError, Oid};
+use gityas_core::{GitYasError, Oid, RepoId};
 use gityas_engine::CheckoutTarget;
 
-use super::{Intent, RemoteTags, dialogs};
+use super::{Intent, RemoteTags, dialogs, worktree_dialog};
 use crate::app::{GitYasApp, Selection, SidePage};
 use crate::dialogs::Confirm;
 use crate::ui;
@@ -24,6 +25,8 @@ pub const TASK_STASH: &str = "stash_op";
 pub const TASK_COMMIT_DATA: &str = "commit_data";
 pub const TASK_REWORD: &str = "reword_commit";
 pub const TASK_RESET: &str = "reset";
+/// Add / remove / open a worktree.
+pub const TASK_WORKTREE: &str = "worktree";
 
 pub(super) fn apply(app: &mut GitYasApp, intent: Intent) {
     match intent {
@@ -64,6 +67,15 @@ pub(super) fn apply(app: &mut GitYasApp, intent: Intent) {
         Intent::OpenDiff(request) => ui::diff::toggle(app, request),
         Intent::RewordCommit { commit, message } => reword(app, commit, message),
         Intent::Solo(refname) => solo(app, refname),
+        Intent::AddWorktree(existing) => worktree_dialog::open(app, existing),
+        Intent::OpenWorktree(path) => open_worktree(app, path),
+        Intent::RevealPath(path) => reveal_path(app, &path),
+        Intent::RemoveWorktree {
+            name,
+            folder,
+            locked,
+            prunable,
+        } => confirm_remove_worktree(app, name, folder, locked, prunable),
         Intent::Reset {
             commit,
             mode: ResetMode::Soft,
@@ -404,4 +416,91 @@ fn trim_cache<T>(cache: &mut HashMap<Oid, super::Loadable<T>>) {
     if cache.len() >= MAX {
         cache.retain(|_, v| matches!(v, super::Loadable::Loading));
     }
+}
+
+// ---- worktrees ------------------------------------------------------------------------------------------------
+
+/// Same folder (canonical where both exist, so `C:\x` and `c:/x/` match).
+fn same_folder(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.components().eq(b.components()),
+    }
+}
+
+/// The registered repository at this folder, if any.
+fn registered_at(app: &GitYasApp, path: &Path) -> Option<RepoId> {
+    app.store
+        .repositories
+        .iter()
+        .find(|r| same_folder(&r.path, path))
+        .map(|r| r.id.clone())
+}
+
+/// Opens the worktree at `path` in a tab, registering it as a repository first if needed.
+pub(super) fn open_worktree(app: &mut GitYasApp, path: PathBuf) {
+    if let Some(id) = registered_at(app, &path) {
+        ui::repos::switch_to(app, id);
+        return;
+    }
+    let p = path.clone();
+    app.bridge.run(
+        TASK_WORKTREE,
+        move |engine| async move { engine.add_repository(p, None).await },
+        move |app, result| match result {
+            Ok(repo) => ui::repos::switch_to(app, repo.id),
+            Err(err @ GitYasError::AlreadyExists(_)) => match registered_at(app, &path) {
+                Some(id) => ui::repos::switch_to(app, id),
+                None => app.report_error(&format!("Could not open {}", path.display()), &err),
+            },
+            Err(err) => app.report_error(&format!("Could not open {}", path.display()), &err),
+        },
+    );
+}
+
+fn reveal_path(app: &mut GitYasApp, path: &Path) {
+    if let Err(err) = gityas_platform::reveal_in_file_manager(path) {
+        app.report_error(&format!("Could not show {}", path.display()), &err);
+    }
+}
+
+fn confirm_remove_worktree(app: &mut GitYasApp, name: String, folder: String, locked: bool, prunable: bool) {
+    if prunable {
+        let body = format!("Prune worktree {folder}? Its folder is already gone; this removes what git still keeps about it.");
+        app.confirm(Confirm::new("Prune worktree", body, "Prune", move |app| {
+            remove_worktree(app, name, folder, true)
+        }));
+        return;
+    }
+    let body = format!("Remove worktree {folder}? Its folder is deleted; its branch is kept.");
+    let mut confirm = Confirm::new("Remove worktree", body, "Remove worktree", move |app| {
+        // A locked worktree was confirmed with the warning below: remove it like `git worktree remove -f -f`.
+        remove_worktree(app, name, folder, locked)
+    });
+    if locked {
+        confirm = confirm.with_warning("It is locked; remove it anyway?");
+    }
+    app.confirm(confirm);
+}
+
+/// Removes a linked worktree; if it has changes, asks again with "Force remove".
+fn remove_worktree(app: &mut GitYasApp, name: String, folder: String, force: bool) {
+    let n = name.clone();
+    app.bridge.run(
+        TASK_WORKTREE,
+        move |engine| async move { engine.remove_worktree(n, force).await },
+        move |app, result| match result {
+            Ok(()) => app.notify.success(format!("Removed worktree {folder}")),
+            Err(GitYasError::WorktreeDirty(_)) if !force => {
+                let body = format!("Remove worktree {folder}?");
+                app.confirm(
+                    Confirm::new("Remove worktree", body, "Force remove", move |app| {
+                        remove_worktree(app, name, folder, true)
+                    })
+                    .with_warning("It has uncommitted changes; they will be lost"),
+                );
+            }
+            Err(err) => app.report_error(&format!("Could not remove worktree {folder}"), &err),
+        },
+    );
 }

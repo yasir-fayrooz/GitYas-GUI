@@ -384,6 +384,7 @@ mod tests {
                 "RemotesUpdated",
                 "GitFilesChanged",
                 "StashesUpdated",
+                "WorktreesUpdated",
                 "RepoStatusUpdated"
             ]
         );

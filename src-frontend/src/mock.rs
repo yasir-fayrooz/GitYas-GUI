@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use gityas_core::models::{
     Branch, BranchKind, ChangeCounts, Commit, CommitSignature, CommitWrapper, Delta, DeltaChange, FileState, Head, OpenTabs, Reference,
-    RepoStatus, Repository, Stash, StashDetails, Tag, TagAnnotation,
+    RepoStatus, Repository, Stash, StashDetails, Tag, TagAnnotation, Worktree,
 };
 use gityas_core::{AppEvent, Oid, Provider};
 
@@ -218,6 +218,30 @@ pub fn stashes() -> Vec<StashDetails> {
     ]
 }
 
+/// The mock repository plus a linked worktree for the hunk-staging branch.
+pub fn worktrees() -> Vec<Worktree> {
+    let worktree = |name: Option<&str>, path: &str, branch: &str, head: &str, is_current: bool| Worktree {
+        name: name.map(str::to_owned),
+        path: path.into(),
+        branch: Some(branch.into()),
+        head: Some(oid(head)),
+        is_current,
+        locked: false,
+        lock_reason: None,
+        prunable: false,
+    };
+    vec![
+        worktree(None, "/mock/git-yas", "main", "merge-egui", true),
+        worktree(
+            Some("git-yas-hunk-perf"),
+            "/mock/git-yas-hunk-perf",
+            "feature/hunk-perf",
+            "hunk",
+            false,
+        ),
+    ]
+}
+
 pub fn repository() -> Repository {
     Repository {
         id: MOCK_REPO_ID.into(),
@@ -271,6 +295,10 @@ pub fn install(app: &mut GitYasApp) {
         AppEvent::StashesUpdated {
             repo: id.clone(),
             stashes: stashes(),
+        },
+        AppEvent::WorktreesUpdated {
+            repo: id.clone(),
+            worktrees: worktrees(),
         },
         AppEvent::RepoStatusUpdated {
             repo: id.clone(),

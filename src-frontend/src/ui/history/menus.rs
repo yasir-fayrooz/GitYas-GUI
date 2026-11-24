@@ -15,6 +15,8 @@ pub(super) struct MenuCtx {
     pub unborn: bool,
     /// Full ref name of the soloed branch, if any.
     pub solo: Option<String>,
+    /// Short names of the branches checked out in a worktree (this one included).
+    pub in_worktrees: Vec<String>,
 }
 
 impl MenuCtx {
@@ -28,6 +30,7 @@ impl MenuCtx {
             remotes: repo.remotes.clone(),
             unborn: repo.head.as_ref().is_some_and(Head::is_unborn),
             solo: repo.solo.clone(),
+            in_worktrees: repo.worktrees.iter().filter_map(|w| w.branch.clone()).collect(),
         }
     }
 }
@@ -101,6 +104,16 @@ pub(super) fn local_branch(ui: &mut Ui, branch: &Branch, ctx: &MenuCtx, out: &mu
             from: branch.target.clone(),
             label: Some(name.clone()),
         });
+    }
+    let worktree_disabled = if head {
+        Some("Already checked out here")
+    } else if ctx.in_worktrees.iter().any(|b| b == name) {
+        Some("Already checked out in another worktree")
+    } else {
+        None
+    };
+    if item(ui, "Check out in new worktree…", worktree_disabled) {
+        out.push(Intent::AddWorktree(Some(branch.refname.clone())));
     }
     solo_item(ui, branch, ctx, out);
     if item(ui, "Copy name", None) {

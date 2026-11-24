@@ -2,7 +2,9 @@
 
 use std::sync::Mutex;
 
-use crate::models::{Branch, CommitSignature, CommitWrapper, FileState, Head, RemoteProgress, RepoStatus, Repository, StashDetails};
+use crate::models::{
+    Branch, CommitSignature, CommitWrapper, FileState, Head, RemoteProgress, RepoStatus, Repository, StashDetails, Worktree,
+};
 use crate::{Provider, RepoId};
 
 /// Repo-scoped variants carry `repo` so the frontend can drop late events from a previously active repository.
@@ -39,6 +41,11 @@ pub enum AppEvent {
         repo: RepoId,
         stashes: Vec<StashDetails>,
     },
+    /// Every worktree of the repository (`git worktree list`), the main one first.
+    WorktreesUpdated {
+        repo: RepoId,
+        worktrees: Vec<Worktree>,
+    },
     /// Operation in progress (merge, rebase, ...) and repository caveats (shallow, bare).
     RepoStatusUpdated {
         repo: RepoId,
@@ -70,6 +77,7 @@ impl AppEvent {
             | AppEvent::RemotesUpdated { repo, .. }
             | AppEvent::GitFilesChanged { repo, .. }
             | AppEvent::StashesUpdated { repo, .. }
+            | AppEvent::WorktreesUpdated { repo, .. }
             | AppEvent::RepoStatusUpdated { repo, .. } => Some(repo),
             AppEvent::RemoteProgress { repo, .. } => repo.as_ref(),
             AppEvent::RepositoriesUpdated(_)
@@ -92,6 +100,7 @@ impl AppEvent {
             AppEvent::RemotesUpdated { .. } => "RemotesUpdated",
             AppEvent::GitFilesChanged { .. } => "GitFilesChanged",
             AppEvent::StashesUpdated { .. } => "StashesUpdated",
+            AppEvent::WorktreesUpdated { .. } => "WorktreesUpdated",
             AppEvent::RepoStatusUpdated { .. } => "RepoStatusUpdated",
             AppEvent::CommitsSignatureUpdated(_) => "CommitsSignatureUpdated",
             AppEvent::AuthStatusUpdated { .. } => "AuthStatusUpdated",
@@ -198,6 +207,10 @@ mod tests {
                 repo: r(),
                 stashes: vec![],
             },
+            AppEvent::WorktreesUpdated {
+                repo: r(),
+                worktrees: vec![],
+            },
             AppEvent::RepoStatusUpdated {
                 repo: r(),
                 status: RepoStatus::default(),
@@ -227,7 +240,7 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), events.len());
         let scoped = events.iter().filter(|e| e.repo().is_some()).count();
-        assert_eq!(scoped, 9);
+        assert_eq!(scoped, 10);
         for event in &events {
             assert_eq!(event.repo().is_some(), !event.is_for(Some("other")), "{}", event.name());
             assert!(event.is_for(Some("r1")));

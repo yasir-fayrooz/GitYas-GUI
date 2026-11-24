@@ -26,6 +26,8 @@ pub struct Refresh {
     pub stashes: bool,
     /// `RepoStatusUpdated` (operation in progress, shallow / bare).
     pub status: bool,
+    /// `WorktreesUpdated` (linked worktrees and what each has checked out).
+    pub worktrees: bool,
 }
 
 impl Refresh {
@@ -38,6 +40,7 @@ impl Refresh {
         files: false,
         stashes: false,
         status: false,
+        worktrees: false,
     };
     pub const ALL: Refresh = Refresh {
         commits: true,
@@ -48,6 +51,7 @@ impl Refresh {
         files: true,
         stashes: true,
         status: true,
+        worktrees: true,
     };
     /// Working tree / index changed (stage, unstage, discard, file watcher).
     pub const FILES: Refresh = Refresh {
@@ -62,6 +66,7 @@ impl Refresh {
         local_branches: true,
         files: true,
         status: true,
+        worktrees: true,
         ..Refresh::NONE
     };
     /// `refs/heads`, tags or `refs/stash` changed (branch create/delete, tag ops, stash).
@@ -70,6 +75,7 @@ impl Refresh {
         head: true,
         local_branches: true,
         stashes: true,
+        worktrees: true,
         ..Refresh::NONE
     };
     /// Remote-tracking refs changed (fetch, push, remote branch delete).
@@ -91,6 +97,7 @@ impl Refresh {
             files: self.files || other.files,
             stashes: self.stashes || other.stashes,
             status: self.status || other.status,
+            worktrees: self.worktrees || other.worktrees,
         }
     }
 
@@ -102,7 +109,8 @@ impl Refresh {
             || self.remotes
             || self.files
             || self.stashes
-            || self.status)
+            || self.status
+            || self.worktrees)
     }
 }
 
@@ -169,6 +177,15 @@ pub(crate) fn refresh_blocking(inner: &Inner, ctx: &SessionCtx, repo: &git2::Rep
         part(
             "stashes",
             gityas_git::stash::list_stashes(repo).map(|stashes| AppEvent::StashesUpdated { repo: repo_id(), stashes }),
+        );
+    }
+    if what.worktrees {
+        part(
+            "worktrees",
+            gityas_git::worktrees::list_worktrees(repo).map(|worktrees| AppEvent::WorktreesUpdated {
+                repo: repo_id(),
+                worktrees,
+            }),
         );
     }
     if what.status {

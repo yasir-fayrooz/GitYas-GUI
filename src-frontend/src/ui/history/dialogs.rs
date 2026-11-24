@@ -123,10 +123,13 @@ pub(super) fn show(ctx: &egui::Context, app: &mut GitYasApp) {
     if app.history_ui.create_tag.is_some() {
         show_create_tag(ctx, app);
     }
+    if app.history_ui.add_worktree.is_some() {
+        super::worktree_dialog::show(ctx, app);
+    }
 }
 
 /// Live validation of the branch name: `Err(reason)` disables the button (reason shown when the name isn't empty).
-fn branch_name_problem(app: &GitYasApp, name: &str) -> Result<(), &'static str> {
+pub(super) fn branch_name_problem(app: &GitYasApp, name: &str) -> Result<(), &'static str> {
     if let Some(problem) = ref_name_error(name) {
         return Err(problem);
     }

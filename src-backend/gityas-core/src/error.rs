@@ -35,6 +35,9 @@ pub enum GitYasError {
     /// Deleting a local branch (short name) whose commits are not merged; deleting with force discards them.
     #[error("Branch {0:?} is not fully merged; delete it with force to discard its commits")]
     NotMerged(String),
+    /// Removing a worktree (folder name) with uncommitted or untracked changes; removing with force discards them.
+    #[error("Worktree {0:?} has uncommitted changes; remove it with force to discard them")]
+    WorktreeDirty(String),
     /// The remote refused a non-fast-forward update: pull first, or force push. Other rejections (hooks,
     /// protected branches) are `Git`.
     #[error("Push rejected: {0}")]

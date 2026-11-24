@@ -7,7 +7,7 @@
 //! Modules:
 //! * Repositories and remotes: [`repository`], [`branches`], [`refs`], [`stash`], [`remote`] (callbacks,
 //!   fetch/push/merge)
-//! * History and working tree: [`commits`], [`status`], [`worktree`], [`cache`]
+//! * History and working tree: [`commits`], [`status`], [`worktree`], [`cache`]; linked worktrees: [`worktrees`]
 //! * Diffs and merges: [`diff`], [`merge`]
 //! * Shared: [`convert`] (oid conversions, `hunk_content_hash` used by both diffs and hunk staging)
 
@@ -24,6 +24,7 @@ pub mod repository;
 pub mod stash;
 pub mod status;
 pub mod worktree;
+pub mod worktrees;
 
 /// Maps a libgit2 error into the shared error type.
 pub fn git_error(err: git2::Error) -> gityas_core::GitYasError {

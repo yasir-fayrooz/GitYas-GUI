@@ -14,6 +14,7 @@ mod settings;
 mod stash;
 mod status;
 mod tag;
+mod worktree;
 
 pub use branch::{Branch, BranchKind};
 pub use cache::{CommitRow, RefTip, RefsFingerprint};
@@ -32,3 +33,4 @@ pub use settings::{
 pub use stash::{Stash, StashDetails};
 pub use status::{RepoOperation, RepoStatus};
 pub use tag::{Tag, TagAnnotation};
+pub use worktree::{Worktree, WorktreeBranch};

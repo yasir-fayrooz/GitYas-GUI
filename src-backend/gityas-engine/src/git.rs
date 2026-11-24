@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use gityas_core::diff::{DiffTarget, FileDiff, HunkRef};
 use gityas_core::models::{
     AbortMergeOutcome, Branch, BranchKind, CommitBody, CommitSignature, DeletedMergeAction, Delta, FetchSummary, FileState, Head,
-    MergeConflict, MergeOutcome, PullOutcome, PushOutcome, RemoteOp, ResetMode, StashApplyOutcome, StashDetails,
+    MergeConflict, MergeOutcome, PullOutcome, PushOutcome, RemoteOp, ResetMode, StashApplyOutcome, StashDetails, Worktree, WorktreeBranch,
 };
 use gityas_core::{GitYasError, Oid, Result};
-use gityas_git::{branches, commits, diff, merge, refs, remote, repository, stash, status, worktree};
+use gityas_git::{branches, commits, diff, merge, refs, remote, repository, stash, status, worktree, worktrees};
 
 use crate::refresh::{Refresh, refresh_blocking};
 use crate::session::SessionCtx;
@@ -34,6 +34,7 @@ const TAGS: Refresh = Refresh {
 const BRANCHES: Refresh = Refresh {
     commits: true,
     local_branches: true,
+    worktrees: true,
     ..Refresh::NONE
 };
 /// `refs/stash` changed (it is listed in `CommitsUpdated.references` as `ReferenceKind::Stash`).
@@ -271,6 +272,35 @@ impl Engine {
                     "{refname:?} is not a branch (expected refs/heads/… or refs/remotes/…)"
                 )));
             }
+            Ok(())
+        })
+        .await
+    }
+
+    // ---- Worktrees -------------------------------------------------------------------------------------------------
+
+    /// Every worktree of the repository, the main one first (also emitted as `WorktreesUpdated` on refresh).
+    pub async fn worktrees(&self) -> Result<Vec<Worktree>> {
+        self.with_repo(|_, _, repo| worktrees::list_worktrees(repo)).await
+    }
+
+    /// Adds a linked worktree at `path` (missing or empty folder) checking out `branch` (a new branch is created
+    /// first). The new worktree is not opened; register it with `add_repository` to open it.
+    pub async fn add_worktree(&self, path: PathBuf, branch: WorktreeBranch) -> Result<Worktree> {
+        self.with_repo(move |inner, ctx, repo| {
+            let added = worktrees::add_worktree(repo, &path, &branch)?;
+            refresh_after(inner, ctx, repo, BRANCHES);
+            Ok(added)
+        })
+        .await
+    }
+
+    /// Removes linked worktree `name` (its folder and admin data; its branch is kept). Without `force`, a worktree
+    /// with changes is refused with `WorktreeDirty` and a locked one with `InvalidInput`.
+    pub async fn remove_worktree(&self, name: String, force: bool) -> Result<()> {
+        self.with_repo(move |inner, ctx, repo| {
+            worktrees::remove_worktree(repo, &name, force)?;
+            refresh_after(inner, ctx, repo, BRANCHES);
             Ok(())
         })
         .await

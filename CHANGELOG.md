@@ -14,6 +14,14 @@ How to write it:
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-25
+
+### Added
+
+- **Worktrees** in the branches sidebar: see every worktree of the repository and the branch each one is on, add
+  one on a new or existing branch (also from a branch's **Check out in new worktree…**), open it in a tab, and
+  remove or prune it. Worktrees added or removed from the command line appear on their own.
+
 ## [1.0.0] - 2026-11-23
 
 The first open-source release of GitYas: a free, offline-first Git client written in Rust. No account, no sign-in

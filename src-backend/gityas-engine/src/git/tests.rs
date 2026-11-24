@@ -12,6 +12,7 @@ use gityas_core::diff::{DiffTarget, HunkRef};
 use gityas_core::events::RecordingSink;
 use gityas_core::models::{
     BranchKind, CommitSignature, DeletedMergeAction, Delta, DeltaChange, Head, MergeOutcome, RemoteOp, RemoteProgress, StashApplyOutcome,
+    WorktreeBranch,
 };
 use gityas_core::{AppEvent, EventSink, GitYasError, Oid};
 use gityas_git::remote::TransferProgress;
@@ -24,24 +25,28 @@ use crate::{CheckoutTarget, Engine, EngineOptions};
 
 // ---- helpers -----------------------------------------------------------------------------------------------
 
-const HEAD_EVENTS: [&str; 5] = [
+const HEAD_EVENTS: [&str; 6] = [
     "CommitsUpdated",
     "CommitsHeadUpdated",
     "LocalBranchesUpdated",
     "GitFilesChanged",
+    "WorktreesUpdated",
     "RepoStatusUpdated",
 ];
+/// Branch created / deleted / renamed, worktree added / removed: decorations, local branches and worktrees.
+const BRANCH_EVENTS: [&str; 3] = ["CommitsUpdated", "LocalBranchesUpdated", "WorktreesUpdated"];
 /// `Refresh::FILES`: status plus the repository state (a merge can end by resolving or aborting).
 const FILES_EVENTS: [&str; 2] = ["GitFilesChanged", "RepoStatusUpdated"];
 const REMOTE_REFS_EVENTS: [&str; 4] = ["CommitsUpdated", "LocalBranchesUpdated", "RemoteBranchesUpdated", "RemotesUpdated"];
 /// Fetch and pull refresh every ref list.
-const ALL_REFS_EVENTS: [&str; 6] = [
+const ALL_REFS_EVENTS: [&str; 7] = [
     "CommitsUpdated",
     "CommitsHeadUpdated",
     "LocalBranchesUpdated",
     "RemoteBranchesUpdated",
     "RemotesUpdated",
     "StashesUpdated",
+    "WorktreesUpdated",
 ];
 
 fn init(dir: &Path) -> Repository {
@@ -262,6 +267,20 @@ fn every_command(e: &Engine) -> Vec<(&'static str, Call)> {
         call!("apply_stash", |e: Engine, _o: Oid| async move { e.apply_stash(0).await }),
         call!("pop_stash", |e: Engine, _o: Oid| async move { e.pop_stash(0).await }),
         call!("delete_stash", |e: Engine, _o: Oid| async move { e.delete_stash(0).await }),
+        call!("worktrees", |e: Engine, _o: Oid| async move { e.worktrees().await }),
+        call!("add_worktree", |e: Engine, _o: Oid| async move {
+            e.add_worktree(
+                "wt".into(),
+                WorktreeBranch::New {
+                    name: "b".into(),
+                    from: None,
+                },
+            )
+            .await
+        }),
+        call!("remove_worktree", |e: Engine, _o: Oid| async move {
+            e.remove_worktree("wt".into(), false).await
+        }),
         call!("file_diff", |e: Engine, _o: Oid| async move {
             e.file_diff(DiffTarget::WorkingTree { staged: false }, d()).await
         }),
@@ -284,7 +303,7 @@ fn every_command(e: &Engine) -> Vec<(&'static str, Call)> {
 async fn every_command_without_a_session_is_no_active_repository() {
     let t = test_engine();
     let calls = every_command(&t.engine);
-    assert_eq!(calls.len(), 39);
+    assert_eq!(calls.len(), 42);
     for (name, call) in calls {
         assert_eq!(call.await.err(), Some(GitYasError::NoActiveRepository), "{name}");
     }
@@ -523,6 +542,57 @@ async fn tags_local_and_remote() {
     assert!(r.work.find_reference("refs/tags/v1").is_err());
 }
 
+// ---- worktrees ------------------------------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worktree_add_list_and_remove() {
+    let t = test_engine();
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    let repo = init(&main);
+    commit(
+        &repo,
+        &[(
+            "f.txt", "1
+",
+        )],
+        "one",
+    );
+    t.install_session(&main);
+
+    let path = dir.path().join("main-topic");
+    let added = t
+        .engine
+        .add_worktree(
+            path.clone(),
+            WorktreeBranch::New {
+                name: "topic".into(),
+                from: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(names(&t), BRANCH_EVENTS);
+    assert_eq!(added.branch.as_deref(), Some("topic"));
+    assert!(path.join("f.txt").is_file());
+    let listed = t.engine.worktrees().await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed[0].is_current && listed[0].is_main());
+    assert!(t.sink.take().is_empty());
+
+    std::fs::write(path.join("wip.txt"), "x").unwrap();
+    let name = added.name.unwrap();
+    assert!(matches!(
+        t.engine.remove_worktree(name.clone(), false).await,
+        Err(GitYasError::WorktreeDirty(_))
+    ));
+    assert!(t.sink.take().is_empty());
+    t.engine.remove_worktree(name, true).await.unwrap();
+    assert_eq!(names(&t), BRANCH_EVENTS);
+    assert!(!path.exists());
+}
+
 // ---- branches -------------------------------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -536,7 +606,7 @@ async fn branch_create_checkout_detach_and_delete() {
 
     let refname = t.engine.create_branch("feature".into(), Some(oid(first)), false).await.unwrap();
     assert_eq!(refname, "refs/heads/feature");
-    assert_eq!(names(&t), ["CommitsUpdated", "LocalBranchesUpdated"]);
+    assert_eq!(names(&t), BRANCH_EVENTS);
     assert_eq!(repo.head().unwrap().name(), Some("refs/heads/main"));
 
     t.engine.checkout(CheckoutTarget::Branch(refname.clone())).await.unwrap();
@@ -564,7 +634,7 @@ async fn branch_create_checkout_detach_and_delete() {
 
     // `feature` (at `first`) is merged into HEAD (`second`), so a safe delete works.
     t.engine.delete_branch(refname, false).await.unwrap();
-    assert_eq!(names(&t), ["CommitsUpdated", "LocalBranchesUpdated"]);
+    assert_eq!(names(&t), BRANCH_EVENTS);
     assert!(repo.find_reference("refs/heads/feature").is_err());
     assert!(matches!(
         t.engine.delete_branch("refs/tags/x".into(), false).await,
@@ -726,6 +796,7 @@ async fn pull_fast_forward() {
             "RemotesUpdated",
             "GitFilesChanged",
             "StashesUpdated",
+            "WorktreesUpdated",
             "RepoStatusUpdated"
         ]
     );

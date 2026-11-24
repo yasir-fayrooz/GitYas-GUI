@@ -15,8 +15,10 @@ pub(crate) mod model;
 mod sidebar;
 #[cfg(test)]
 mod tests;
+mod worktree_dialog;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use egui::Ui;
 use gityas_core::models::{CommitBody, Delta, ResetMode};
@@ -38,6 +40,7 @@ pub struct HistoryUi {
     create_branch: Option<dialogs::CreateBranch>,
     rename_branch: Option<dialogs::RenameBranch>,
     create_tag: Option<dialogs::CreateTag>,
+    add_worktree: Option<worktree_dialog::AddWorktree>,
     /// Commit messages by id (`commit_body`); commits are immutable, so entries never go stale.
     bodies: HashMap<Oid, Loadable<CommitBody>>,
     /// Changed files by commit id (`commit_files`).
@@ -149,6 +152,19 @@ pub(crate) enum Intent {
     Reset {
         commit: Oid,
         mode: ResetMode,
+    },
+    /// Open the Add worktree dialog, checking out this local branch (full ref name) or, by default, a new branch.
+    AddWorktree(Option<String>),
+    /// Open the worktree at this folder in a tab (registering it as a repository first if needed).
+    OpenWorktree(PathBuf),
+    /// Show a folder in the file manager.
+    RevealPath(PathBuf),
+    /// Remove a linked worktree (asks first; asks again with force if it has changes).
+    RemoveWorktree {
+        name: String,
+        folder: String,
+        locked: bool,
+        prunable: bool,
     },
 }
 

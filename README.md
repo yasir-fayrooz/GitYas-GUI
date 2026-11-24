@@ -39,6 +39,8 @@
 - **Made for the keyboard.** Speed mode puts staging, committing and pushing one key away, from any app.
 - **Fits around your editor.** Drag a changed file straight into VS Code, JetBrains, Zed or any editor to open it.
 - **Merge conflicts on your terms.** Ours, theirs and the result are panes you arrange however you like.
+- **Several branches at once.** Check a branch out in its own worktree and open each one in a tab, without stashing
+  or switching.
 - **Yours.** MIT licensed, with no paid plan, no trial and no feature limits.
 
 ## Highlights
@@ -105,7 +107,17 @@ One line each here. Release notes for every version are in the [changelog](CHANG
 - Commit details: author, parents and message
 - Search commits by message, author or SHA
 - Checkout, branch, tag and reset straight from the graph
-- Local and remote branches, tags and stashes in a filterable sidebar
+- Local and remote branches, tags, stashes and worktrees in a filterable sidebar
+
+### Worktrees
+
+- Every worktree of the repository in the sidebar, with the branch each one has checked out and the open one ticked
+- Add a worktree on a new branch or an existing one, from the sidebar or a branch's **Check out in new worktree…**
+- Open a worktree in its own tab with a double click, show it in your file manager or copy its path
+- Remove a worktree (its branch is kept), with a second confirmation when it has uncommitted changes; prune ones
+  whose folder is gone
+- Locked and missing worktrees are marked, and worktrees added or removed with the `git` command line show up on
+  their own
 
 ### Changes and committing
 

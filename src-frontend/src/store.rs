@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use gityas_core::models::{
     Branch, Commit, CommitSignature, CommitWrapper, FileState, Head, OpenTabs, Reference, RemoteProgress, RepoStatus, Repository, Settings,
-    StashDetails,
+    StashDetails, Worktree,
 };
 use gityas_core::{AppEvent, Oid, Provider, RepoId};
 
@@ -25,6 +25,7 @@ pub struct Loaded {
     pub files: bool,
     pub stashes: bool,
     pub status: bool,
+    pub worktrees: bool,
 }
 
 /// Everything known about the active repository.
@@ -45,6 +46,8 @@ pub struct RepoData {
     pub remotes: Vec<String>,
     pub files: FileState,
     pub stashes: Vec<StashDetails>,
+    /// Every worktree of the repository (main first), from `WorktreesUpdated`.
+    pub worktrees: Vec<Worktree>,
     pub status: RepoStatus,
     pub loaded: Loaded,
     /// Derived from `commits` + `files` (WIP row) on every change; see [`RepoData::rebuild`].
@@ -254,6 +257,10 @@ impl Store {
             AppEvent::StashesUpdated { stashes, .. } => self.with_repo(|r| {
                 r.stashes = stashes;
                 r.loaded.stashes = true;
+            }),
+            AppEvent::WorktreesUpdated { worktrees, .. } => self.with_repo(|r| {
+                r.worktrees = worktrees;
+                r.loaded.worktrees = true;
             }),
             AppEvent::RepoStatusUpdated { status, .. } => self.with_repo(|r| {
                 r.status = status;

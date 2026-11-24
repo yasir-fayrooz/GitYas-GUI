@@ -346,13 +346,13 @@ async fn linked_worktree_watches_its_gitdir_and_the_shared_refs() {
     .await;
     assert!(has(&events, "LocalBranchesUpdated"), "{:?}", names(&events));
 
-    // The main worktree's files and HEAD are not this session's.
+    // The main worktree's files are not this session's; its HEAD only updates the worktree list.
     collect(&t, Duration::from_millis(200)).await;
     std::fs::write(main_dir.path().join("README"), "changed in main\n").unwrap();
     let main_head = main_dir.path().join(".git/HEAD");
     std::fs::write(&main_head, std::fs::read(&main_head).unwrap()).unwrap();
     let events = collect(&t, QUIET).await;
-    assert!(events.is_empty(), "{:?}", names(&events));
+    assert!(events.iter().all(|e| e.name() == "WorktreesUpdated"), "{:?}", names(&events));
 
     ctx.cancel.cancel();
     assert!(finishes(task).await);

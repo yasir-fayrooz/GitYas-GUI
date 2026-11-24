@@ -14,7 +14,8 @@
 //! Bare: the git dir.
 //!
 //! **Noise ignored:** inside a git dir, `objects/**`, `logs/**`, `*.lock`, `hooks/**`, `modules/**` (submodule git
-//! dirs), other worktrees' state (`worktrees/**`), `FETCH_HEAD`/`ORIG_HEAD`/`COMMIT_EDITMSG` and anything unknown;
+//! dirs), other worktrees' state under `worktrees/**` (except their `HEAD`, `locked`, `gitdir` and the folders
+//! themselves, which update the worktree list), `FETCH_HEAD`/`ORIG_HEAD`/`COMMIT_EDITMSG` and anything unknown;
 //! in the working tree, any path with a `.git` component (a submodule's or nested repository's git dir) and
 //! gitignored paths (`Repository::is_path_ignored`, cached per parent directory so a `node_modules` storm costs one
 //! ignore lookup per directory). `*.lock` is only noise inside git dirs: `Cargo.lock` in the working tree is a file.
@@ -46,6 +47,9 @@ pub(crate) enum WatchKind {
     RefsHeads,
     /// `refs/remotes`, and the remote configuration (`config`).
     RefsRemotes,
+    /// Another worktree added, removed, locked or moved to another branch (`worktrees/<name>`, its `HEAD`,
+    /// `locked`, `gitdir`).
+    Worktrees,
 }
 
 impl WatchKind {
@@ -55,6 +59,10 @@ impl WatchKind {
             WatchKind::Head => Refresh::HEAD,
             WatchKind::RefsHeads => Refresh::LOCAL_REFS,
             WatchKind::RefsRemotes => Refresh::REMOTE_REFS,
+            WatchKind::Worktrees => Refresh {
+                worktrees: true,
+                ..Refresh::NONE
+            },
         }
     }
 }
@@ -182,6 +190,22 @@ fn classify_git(rel: &Path, per_worktree: bool, shared: bool) -> Option<WatchKin
         }
     }
     if shared {
+        if !per_worktree && single && is("HEAD") {
+            // Seen from a linked worktree: the main worktree switched branches.
+            return Some(WatchKind::Worktrees);
+        }
+        if is("worktrees") {
+            // The admin dirs of the linked worktrees: which exist, what each has checked out, whether it is locked.
+            // Their index and logs churn while someone works there and don't change the list.
+            let third = parts.next();
+            return match (second, third, parts.next()) {
+                (_, None, _) => Some(WatchKind::Worktrees),
+                (Some(_), Some(file), None) if ["HEAD", "locked", "gitdir"].iter().any(|n| file == OsStr::new(n)) => {
+                    Some(WatchKind::Worktrees)
+                }
+                _ => None,
+            };
+        }
         if single && is("packed-refs") {
             // Packed refs hold local and remote-tracking refs alike; the caller adds both (see `refresh_for`).
             return Some(WatchKind::RefsHeads);
@@ -490,6 +514,15 @@ mod tests {
         assert_eq!(kind(&l, "/w/.git/packed-refs"), Some(WatchKind::RefsHeads));
         assert_eq!(kind(&l, "/w/.git/config"), Some(WatchKind::RefsRemotes));
         assert_eq!(kind(&l, "/w/.git/info/exclude"), Some(WatchKind::Files));
+        for other_worktree in [
+            "/w/.git/worktrees",
+            "/w/.git/worktrees/other",
+            "/w/.git/worktrees/other/HEAD",
+            "/w/.git/worktrees/other/locked",
+            "/w/.git/worktrees/other/gitdir",
+        ] {
+            assert_eq!(kind(&l, other_worktree), Some(WatchKind::Worktrees), "{other_worktree}");
+        }
         for noise in [
             "/w/.git/objects/ab/cdef",
             "/w/.git/logs/HEAD",
@@ -502,7 +535,8 @@ mod tests {
             "/w/.git/COMMIT_EDITMSG",
             "/w/.git/hooks/pre-commit",
             "/w/.git/modules/sub/HEAD",
-            "/w/.git/worktrees/other/HEAD",
+            "/w/.git/worktrees/other/index",
+            "/w/.git/worktrees/other/logs/HEAD",
             "/w/.git",
             "/w/.git/refs",
             "/w",
@@ -531,9 +565,10 @@ mod tests {
         assert_eq!(kind(&l, "/main/.git/refs/remotes/o/b"), Some(WatchKind::RefsRemotes));
         assert_eq!(kind(&l, "/main/.git/packed-refs"), Some(WatchKind::RefsHeads));
         // The main worktree's own HEAD / index are not this session's.
-        assert_eq!(kind(&l, "/main/.git/HEAD"), None);
+        // The main worktree's HEAD only updates the worktree list; its index is not this session's.
+        assert_eq!(kind(&l, "/main/.git/HEAD"), Some(WatchKind::Worktrees));
         assert_eq!(kind(&l, "/main/.git/index"), None);
-        assert_eq!(kind(&l, "/main/.git/worktrees/other/HEAD"), None);
+        assert_eq!(kind(&l, "/main/.git/worktrees/other/HEAD"), Some(WatchKind::Worktrees));
         // Refs are shared, so they are not read from the worktree git dir's `config`/`packed-refs`.
         assert_eq!(kind(&l, "/main/.git/worktrees/wt/packed-refs"), None);
         // The main working tree is not watched.
