@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-auth"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "gityas-core",
  "keyring",
@@ -2085,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-core"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "secrecy",
  "serde",
@@ -2095,7 +2095,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-engine"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "git2",
  "gityas-auth",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-frontend"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "cargo-packager-updater",
  "chrono",
@@ -2194,7 +2194,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-git"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "git2",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-platform"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "directories",
  "gityas-core",
@@ -2220,7 +2220,7 @@ dependencies = [
 
 [[package]]
 name = "gityas-storage"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "gityas-core",
  "nanoid",

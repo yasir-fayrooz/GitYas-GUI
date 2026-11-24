@@ -35,10 +35,21 @@ pub fn gix_error(err: impl std::fmt::Display) -> GitYasError {
     GitYasError::Git(format!("{err:#}"))
 }
 
+/// Identity gitoxide falls back to when neither `user.*` nor `committer.*` is configured (fresh machines, CI). It
+/// only ever appears in reflog entries of refs that fetch / clone update: gitoxide refuses to write those without a
+/// committer, where libgit2 and the git CLI fall back to a default identity. Commits are never made with it (they
+/// go through libgit2 and require the commit signature set in Settings).
+pub const IDENTITY_FALLBACK: [&str; 2] = [
+    "gitoxide.committer.nameFallback=GitYas",
+    "gitoxide.committer.emailFallback=gityas@localhost",
+];
+
 /// Opens `path` (a working tree, a `.git` dir or a bare repository) with gitoxide, with the full configuration
-/// (global and system included: fetch needs credential helpers, proxies and `core.sshCommand`).
+/// (global and system included: fetch needs credential helpers, proxies and `core.sshCommand`) plus
+/// [`IDENTITY_FALLBACK`].
 pub fn open(path: &Path) -> Result<gix::Repository> {
-    let mut repo = gix::open(path).map_err(|err| {
+    let options = gix::open::Options::default().config_overrides(IDENTITY_FALLBACK);
+    let mut repo = gix::open_opts(path, options).map_err(|err| {
         if !path.exists() {
             GitYasError::NotFound(format!("{} is not a git repository", path.display()))
         } else {
@@ -388,6 +399,24 @@ mod tests {
             let got = read_row(&gix_repo, &gid, &mut buf).unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(got, want);
         }
+    }
+
+    /// CI machines and fresh installs have no `user.name`: fetch must still be able to write reflog entries.
+    #[test]
+    fn identity_fallback_gives_gitoxide_a_committer() {
+        let tmp = tempfile::TempDir::new().unwrap_or_else(|e| panic!("{e}"));
+        git2::Repository::init(tmp.path()).unwrap_or_else(|e| panic!("{e}"));
+        let bare = gix::open::Options::isolated().open(tmp.path()).unwrap_or_else(|e| panic!("{e}"));
+        assert!(bare.committer().is_none(), "isolated: no identity configured");
+        let repo = gix::open::Options::isolated()
+            .config_overrides(IDENTITY_FALLBACK)
+            .open(tmp.path())
+            .unwrap_or_else(|e| panic!("{e}"));
+        let committer = repo.committer().and_then(Result::ok).unwrap_or_else(|| panic!("no committer"));
+        assert_eq!(
+            (committer.name.to_string(), committer.email.to_string()),
+            ("GitYas".into(), "gityas@localhost".into())
+        );
     }
 
     #[test]

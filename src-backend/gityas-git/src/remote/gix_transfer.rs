@@ -490,11 +490,13 @@ pub(crate) fn clone(url: &str, dest: &Path, ctx: &RemoteContext<'_>, session: &S
         let result = with_progress(ctx, |root| -> gix::Result<usize> {
             let callback_log = Arc::clone(&log);
             let callback_url = url.to_owned();
-            let mut prepare = gix::prepare_clone(url, dest)?.configure_connection(move |connection| {
-                let repo = connection.remote().repo().clone();
-                connection.set_credentials(credentials_fn(&repo, &callback_url, creds.clone(), Arc::clone(&callback_log)));
-                Ok(())
-            });
+            let mut prepare = gix::prepare_clone(url, dest)?
+                .with_in_memory_config_overrides(gitoxide::IDENTITY_FALLBACK)
+                .configure_connection(move |connection| {
+                    let repo = connection.remote().repo().clone();
+                    connection.set_credentials(credentials_fn(&repo, &callback_url, creds.clone(), Arc::clone(&callback_log)));
+                    Ok(())
+                });
             let (mut checkout, fetched) = prepare.fetch_then_checkout(root.add_child("fetch"), interrupt)?;
             let _ = checkout.main_worktree(root.add_child("checkout"), interrupt)?;
             Ok(pack_objects(&fetched))
