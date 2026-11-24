@@ -1,13 +1,21 @@
-//! git2 operations and the merge/diff engine. Synchronous and stateless: every function takes a repository
-//! path (or an opened `git2::Repository`) and returns values; no globals, no events, no SQLite.
+//! Git operations and the merge/diff engine. Synchronous and stateless: every function takes a repository
+//! path (or an opened repository) and returns values; no globals, no events, no SQLite.
 //!
-//! Never shells out to the `git` CLI outside `#[cfg(test)]`. Conversions from `git2` types into
+//! Two backends: gitoxide (`gix`, see [`gitoxide`]) reads history, refs, branches and graph queries
+//! ([`commits`], [`cache`], [`refscan`], [`refs`] listing, ahead/behind, merge-base) and fetches / clones;
+//! libgit2 (`git2`) does everything that writes the working tree or index, and push. History functions take
+//! either repository type ([`gitoxide::GixRepo`]).
+//!
+//! The `git` CLI is never run for repository operations outside `#[cfg(test)]`. Fetch / clone run the programs a
+//! transport needs, as git does: the system `ssh` for SSH remotes, `git upload-pack` for local-path remotes, and
+//! the configured credential helpers; when `ssh` or `git` is missing they fall back to libgit2. Conversions into
 //! `gityas_core` models are free functions here (the orphan rule keeps them out of `gityas-core`).
 //!
 //! Modules:
 //! * Repositories and remotes: [`repository`], [`branches`], [`refs`], [`stash`], [`remote`] (callbacks,
 //!   fetch/push/merge)
-//! * History and working tree: [`commits`], [`status`], [`worktree`], [`cache`]; linked worktrees: [`worktrees`]
+//! * History and working tree: [`commits`], [`status`], [`worktree`], [`cache`], [`refscan`] (one read of every
+//!   ref, reused between refreshes); linked worktrees: [`worktrees`]
 //! * Diffs and merges: [`diff`], [`merge`]
 //! * Shared: [`convert`] (oid conversions, `hunk_content_hash` used by both diffs and hunk staging)
 
@@ -17,8 +25,10 @@ pub mod commits;
 pub mod config;
 pub mod convert;
 pub mod diff;
+pub mod gitoxide;
 pub mod merge;
 pub mod refs;
+pub mod refscan;
 pub mod remote;
 pub mod repository;
 pub mod stash;

@@ -11,8 +11,9 @@ use git2::{BranchType, ErrorCode, Repository};
 use gityas_core::models::{Branch, BranchKind};
 use gityas_core::{GitYasError, Oid, Result};
 
-use crate::convert::{oid_from_git, oid_to_git};
+use crate::convert::oid_to_git;
 use crate::git_error;
+use crate::gitoxide::{self, GixRepo};
 use crate::remote::{RemoteContext, push_refspecs};
 use crate::repository::{ensure_clean_state, ensure_not_bare, fresh_index, head_tree, ref_exists};
 
@@ -30,72 +31,247 @@ pub enum CheckoutOutcome {
 ///
 /// Local branches carry upstream + ahead/behind. A configured upstream whose remote-tracking ref no longer exists
 /// is reported with `upstream_gone: true` (`upstream`/`upstream_refname` still name it, ahead/behind 0).
-pub fn list_branches(repo: &Repository, kind: Option<BranchKind>) -> Result<Vec<Branch>> {
-    let filter = kind.map(|k| match k {
-        BranchKind::Local => BranchType::Local,
-        BranchKind::Remote => BranchType::Remote,
-    });
+///
+/// Read with gitoxide from one ref scan ([`crate::refscan`]); upstreams and owning remotes follow libgit2's rules
+/// (`branch_upstream_name`, `branch_remote_name`), with the remotes' refspecs read once per call.
+pub fn list_branches<R: GixRepo + ?Sized>(repo: &R, kind: Option<BranchKind>) -> Result<Vec<Branch>> {
+    let (snapshot, repo) = crate::refscan::scan_refs_once(repo)?;
+    list_branches_from(&repo, &snapshot, kind, None)
+}
+
+/// [`list_branches`] from refs already read. `history`: a loaded history (closed under parents, e.g. the engine's
+/// in-memory one) to count ahead/behind in memory; pairs it does not cover are counted through gitoxide.
+pub fn list_branches_from(
+    repo: &gix::Repository,
+    snapshot: &crate::refscan::RefSnapshot,
+    kind: Option<BranchKind>,
+    history: Option<&[gityas_core::models::Commit]>,
+) -> Result<Vec<Branch>> {
+    let head = repo.head().map_err(gitoxide::gix_error)?;
+    let head_ref = head.referent_name().map(|n| n.as_bstr().to_string());
+    let remotes = RemoteSpecs::read(repo);
+    let by_name: std::collections::HashMap<&str, &crate::refscan::RefEntry> = snapshot.refs.iter().map(|e| (e.name.as_str(), e)).collect();
+    let config = repo.config_snapshot();
     let mut out = Vec::new();
-    for item in repo.branches(filter).map_err(git_error)? {
-        let (branch, branch_type) = item.map_err(git_error)?;
-        let reference = branch.get();
-        if reference.kind() == Some(git2::ReferenceType::Symbolic) {
-            continue;
-        }
-        let Some(refname) = reference.name().map(str::to_owned) else {
-            tracing::warn!(name = %String::from_utf8_lossy(reference.name_bytes()), "skipping branch with a non-UTF-8 name");
-            continue;
-        };
-        let Some(name) = reference.shorthand().map(str::to_owned) else {
-            continue;
-        };
-        let target = reference.target().map(oid_from_git).transpose()?;
-        let mut b = Branch {
-            name,
-            refname: refname.clone(),
-            kind: match branch_type {
-                BranchType::Local => BranchKind::Local,
-                BranchType::Remote => BranchKind::Remote,
-            },
-            target,
-            remote_name: None,
-            upstream: None,
-            upstream_refname: None,
-            upstream_gone: false,
-            ahead: 0,
-            behind: 0,
-            is_head: branch.is_head(),
-        };
-        match branch_type {
-            BranchType::Remote => b.remote_name = remote_of_tracking_ref(repo, &refname)?,
-            BranchType::Local => {
-                if let Some(up_name) = crate::remote::upstream_refname(repo, &refname)? {
-                    b.upstream_refname = Some(up_name.clone());
-                    match repo.find_reference(&up_name) {
-                        Ok(up) => {
-                            let up = up.resolve().map_err(git_error)?;
-                            b.upstream = up.shorthand().map(str::to_owned);
-                            b.remote_name = remote_of_tracking_ref(repo, &up_name)?;
-                            if let (Some(local), Some(remote)) = (reference.target(), up.target()) {
-                                let (ahead, behind) = repo.graph_ahead_behind(local, remote).map_err(git_error)?;
-                                b.ahead = ahead;
-                                b.behind = behind;
+    // (row, local tip, upstream tip): counted below, sharing one revision graph.
+    let mut pairs: Vec<(usize, gix::ObjectId, gix::ObjectId)> = Vec::new();
+    let kinds: &[BranchKind] = match kind {
+        Some(BranchKind::Local) => &[BranchKind::Local],
+        Some(BranchKind::Remote) => &[BranchKind::Remote],
+        None => &[BranchKind::Local, BranchKind::Remote],
+    };
+    for &kind in kinds {
+        let prefix = kind.refname_prefix();
+        for entry in snapshot.refs.iter().filter(|e| e.name.starts_with(prefix)) {
+            // Symbolic refs (`origin/HEAD`) only alias another listed branch.
+            let Some(target) = entry.target else { continue };
+            let refname = entry.name.clone();
+            let mut b = Branch {
+                name: refname[prefix.len()..].to_owned(),
+                refname: refname.clone(),
+                kind,
+                target: Some(gitoxide::oid_from_gix(&target)?),
+                remote_name: None,
+                upstream: None,
+                upstream_refname: None,
+                upstream_gone: false,
+                ahead: 0,
+                behind: 0,
+                is_head: head_ref.as_deref() == Some(refname.as_str()),
+            };
+            match kind {
+                BranchKind::Remote => b.remote_name = remotes.owner(&refname),
+                BranchKind::Local => {
+                    if let Some(up_name) = remotes.upstream(&config, &b.name) {
+                        b.upstream_refname = Some(up_name.clone());
+                        b.remote_name = remotes.owner(&up_name);
+                        match by_name.get(up_name.as_str()) {
+                            Some(up) => {
+                                b.upstream = Some(crate::refs::shorthand(&up_name).to_owned());
+                                if let Some(up_target) = up.target.or(up.commit)
+                                    && up_target != target
+                                {
+                                    pairs.push((out.len(), target, up_target));
+                                }
+                            }
+                            None => {
+                                tracing::debug!(branch = %refname, upstream = %up_name, "upstream is gone");
+                                b.upstream_gone = true;
+                                b.upstream = Some(gityas_core::models::shorten_refname(&up_name).to_owned());
                             }
                         }
-                        Err(e) if e.code() == ErrorCode::NotFound => {
-                            tracing::debug!(branch = %refname, upstream = %up_name, "upstream is gone");
-                            b.upstream_gone = true;
-                            b.upstream = Some(gityas_core::models::shorten_refname(&up_name).to_owned());
-                            b.remote_name = remote_of_tracking_ref(repo, &up_name)?;
-                        }
-                        Err(e) => return Err(git_error(e)),
                     }
                 }
             }
+            out.push(b);
         }
-        out.push(b);
+    }
+    if !pairs.is_empty() {
+        let in_memory = history.map(HistoryGraph::new);
+        let mut remaining = Vec::new();
+        for (index, tip, base) in pairs {
+            let counted = match &in_memory {
+                Some(graph) => graph.ahead_behind(&gitoxide::oid_from_gix(&tip)?, &gitoxide::oid_from_gix(&base)?),
+                None => None,
+            };
+            match counted {
+                Some((ahead, behind)) => {
+                    out[index].ahead = ahead;
+                    out[index].behind = behind;
+                }
+                None => remaining.push((index, tip, base)),
+            }
+        }
+        if !remaining.is_empty() {
+            let cache = repo.commit_graph_if_enabled().unwrap_or(None);
+            let mut counter = gitoxide::AheadBehind::new(repo, cache.as_ref());
+            for (index, tip, base) in remaining {
+                let (ahead, behind) = counter.counts(tip, base)?;
+                out[index].ahead = ahead;
+                out[index].behind = behind;
+            }
+        }
     }
     Ok(out)
+}
+
+/// Parent links of a loaded history, by row index.
+struct HistoryGraph<'a> {
+    index: std::collections::HashMap<&'a Oid, usize>,
+    parents: Vec<Vec<usize>>,
+}
+
+impl<'a> HistoryGraph<'a> {
+    fn new(commits: &'a [gityas_core::models::Commit]) -> Self {
+        let index: std::collections::HashMap<&Oid, usize> = commits.iter().enumerate().map(|(i, c)| (&c.id, i)).collect();
+        let parents = commits
+            .iter()
+            .map(|c| c.parents.iter().filter_map(|p| index.get(p).copied()).collect())
+            .collect();
+        Self { index, parents }
+    }
+
+    /// Commits reachable from `from`, as a mask over rows.
+    fn reach(&self, from: usize) -> Vec<bool> {
+        let mut seen = vec![false; self.parents.len()];
+        let mut stack = vec![from];
+        seen[from] = true;
+        while let Some(at) = stack.pop() {
+            for &p in &self.parents[at] {
+                if !seen[p] {
+                    seen[p] = true;
+                    stack.push(p);
+                }
+            }
+        }
+        seen
+    }
+
+    /// `(ahead, behind)` of `tip` against `base`, or `None` if either is not in the history.
+    fn ahead_behind(&self, tip: &Oid, base: &Oid) -> Option<(usize, usize)> {
+        let (tip, base) = (*self.index.get(tip)?, *self.index.get(base)?);
+        let (a, b) = (self.reach(tip), self.reach(base));
+        let ahead = a.iter().zip(&b).filter(|(a, b)| **a && !**b).count();
+        let behind = a.iter().zip(&b).filter(|(a, b)| !**a && **b).count();
+        Some((ahead, behind))
+    }
+}
+
+/// One `remote.<name>.fetch` refspec (`[+]src:dst`, at most one `*` on each side).
+#[derive(Debug, Clone)]
+struct FetchSpec {
+    src: String,
+    dst: String,
+}
+
+/// `*`-pattern match as libgit2's refspec matching (`*` also matches `/`); returns what `*` matched (`""` for
+/// an exact pattern).
+fn star_match<'n>(pattern: &str, name: &'n str) -> Option<&'n str> {
+    match pattern.split_once('*') {
+        None => (pattern == name).then_some(""),
+        Some((prefix, suffix)) => {
+            if name.len() < prefix.len() + suffix.len() || !name.starts_with(prefix) || !name.ends_with(suffix) {
+                return None;
+            }
+            Some(&name[prefix.len()..name.len() - suffix.len()])
+        }
+    }
+}
+
+fn star_replace(pattern: &str, star: &str) -> String {
+    match pattern.split_once('*') {
+        None => pattern.to_owned(),
+        Some((prefix, suffix)) => format!("{prefix}{star}{suffix}"),
+    }
+}
+
+/// The fetch refspecs of every configured remote, in configuration order.
+struct RemoteSpecs {
+    remotes: Vec<(String, Vec<FetchSpec>)>,
+}
+
+impl RemoteSpecs {
+    fn read(repo: &gix::Repository) -> Self {
+        let config = repo.config_snapshot();
+        let mut remotes = Vec::new();
+        for name in repo.remote_names() {
+            let Ok(name) = String::from_utf8(name.to_vec()) else { continue };
+            let specs = config
+                .plumbing()
+                .strings_by("remote", Some(name.as_str().into()), "fetch")
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|spec| {
+                    let spec = std::str::from_utf8(spec).ok()?.trim();
+                    if spec.starts_with('^') {
+                        return None; // negative refspec: never a destination
+                    }
+                    let (src, dst) = spec.strip_prefix('+').unwrap_or(spec).split_once(':')?;
+                    Some(FetchSpec {
+                        src: src.to_owned(),
+                        dst: dst.to_owned(),
+                    })
+                })
+                .collect();
+            remotes.push((name, specs));
+        }
+        Self { remotes }
+    }
+
+    /// `git_branch_remote_name`: the one remote whose fetch refspec maps onto `refname`; `None` when none or
+    /// several do (ambiguous).
+    fn owner(&self, refname: &str) -> Option<String> {
+        let mut found: Option<&str> = None;
+        for (name, specs) in &self.remotes {
+            if specs.iter().any(|spec| star_match(&spec.dst, refname).is_some()) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(name);
+            }
+        }
+        found.map(str::to_owned)
+    }
+
+    /// `git_branch_upstream_name` for local branch `short`: `branch.<short>.merge` mapped through the first matching
+    /// fetch refspec of `branch.<short>.remote` (or taken as is for remote `.`). `None` when not configured or not
+    /// mappable.
+    fn upstream(&self, config: &gix::config::Snapshot<'_>, short: &str) -> Option<String> {
+        let file = config.plumbing();
+        let remote = file.string_by("branch", Some(short.into()), "remote")?;
+        let merge = file.string_by("branch", Some(short.into()), "merge")?;
+        let (remote, merge) = (std::str::from_utf8(&remote).ok()?, std::str::from_utf8(&merge).ok()?);
+        if remote.is_empty() || merge.is_empty() {
+            return None;
+        }
+        if remote == "." {
+            return Some(merge.to_owned());
+        }
+        let (_, specs) = self.remotes.iter().find(|(name, _)| name == remote)?;
+        specs
+            .iter()
+            .find_map(|spec| star_match(&spec.src, merge).map(|star| star_replace(&spec.dst, star)))
+    }
 }
 
 /// Remote owning a remote-tracking ref, from the configured fetch refspecs (handles remote names with `/`).
@@ -582,7 +758,9 @@ pub fn delete_local_branch(repo: &Repository, refname: &str, force: bool) -> Res
             },
         };
         let merged = match base {
-            Some(base) => base == tip || repo.graph_descendant_of(base, tip).map_err(git_error)?,
+            Some(base) => {
+                base == tip || gitoxide::is_ancestor(&*repo.gix()?, gitoxide::oid_from_git2(tip)?, gitoxide::oid_from_git2(base)?)?
+            }
             None => false,
         };
         if !merged {

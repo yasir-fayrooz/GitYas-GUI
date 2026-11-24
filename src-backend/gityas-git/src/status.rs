@@ -15,6 +15,12 @@
 //!   (libgit2 sorts case-insensitively on case-insensitive filesystems).
 //!
 //! Bare repositories have no working tree: `get_status` returns `InvalidInput` instead of libgit2's raw error.
+//!
+//! [`get_status`] runs on gitoxide: tracked files are compared with their index entries in parallel, untracked
+//! files are found by a directory walk at the same time, and HEAD→index runs on its own thread.
+//! [`get_status_paths`] limits the index→worktree part to some paths, for updating a known status after a few
+//! files changed (the engine's file watcher). [`get_status_libgit2`] is the previous implementation, kept as the
+//! test oracle.
 
 #[cfg(windows)]
 use std::path::{Path, PathBuf};
@@ -24,6 +30,7 @@ use gityas_core::models::{Delta, DeltaChange, FileState};
 use gityas_core::{GitYasError, Result};
 
 use crate::git_error;
+use crate::gitoxide::{GixRepo, gix_error};
 
 /// Repository-relative path from raw git path bytes (`DiffFile::path_bytes`, `StatusEntry::path_bytes`).
 /// On Unix the bytes are kept exactly, so non-UTF-8 paths survive a round trip into git2 again. Elsewhere git
@@ -102,8 +109,218 @@ fn status_options() -> StatusOptions {
     opts
 }
 
-/// Working-tree status of `repo` (see the module docs for the exact contract).
-pub fn get_status(repo: &Repository) -> Result<FileState> {
+/// Working-tree status of `repo` (see the module docs for the exact contract), through gitoxide.
+pub fn get_status<R: GixRepo + ?Sized>(repo: &R) -> Result<FileState> {
+    let repo = repo.gix()?;
+    let workdir = gix_workdir(&repo)?.to_path_buf();
+    let rewrites = gix::diff::Rewrites::default();
+    let platform = repo
+        .status(gix::progress::Discard)
+        .map_err(gix_error)?
+        .untracked_files(gix::status::UntrackedFiles::Files)
+        .index_worktree_submodules(gix::status::Submodule::AsConfigured { check_dirty: true })
+        .index_worktree_rewrites(Some(rewrites))
+        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Given(rewrites));
+    let mut state = FileState::default();
+    let mut staged_changes = Vec::new();
+    for item in platform.into_iter(None).map_err(gix_error)? {
+        match item.map_err(gix_error)? {
+            gix::status::Item::IndexWorktree(item) => {
+                if let Some(delta) = worktree_delta(&item) {
+                    state.unstaged.push(delta);
+                }
+            }
+            gix::status::Item::TreeIndex(change) => staged_changes.push(change),
+        }
+    }
+    // A conflicted path is listed once, in `unstaged`.
+    let conflicted: std::collections::HashSet<std::path::PathBuf> = state
+        .unstaged
+        .iter()
+        .filter(|d| d.change == DeltaChange::Conflicted)
+        .map(|d| d.path.clone())
+        .collect();
+    state.unstaged.dedup_by(|a, b| a.change == DeltaChange::Conflicted && a == b);
+    state.staged = staged_changes
+        .iter()
+        .filter_map(staged_delta)
+        .filter(|d| !conflicted.contains(&d.path) && d.old_path.as_ref().is_none_or(|old| !conflicted.contains(old)))
+        .collect();
+    #[cfg(windows)]
+    follow_linked_dirs(&workdir, &mut state.unstaged)?;
+    #[cfg(not(windows))]
+    let _ = workdir;
+    sort_deltas(&mut state.staged);
+    sort_deltas(&mut state.unstaged);
+    state.unstaged.dedup();
+    Ok(state)
+}
+
+/// The unstaged (index→worktree) part of [`get_status`] for `paths` only (repository-relative files or
+/// directories; a directory covers everything under it), sorted. Renames are not paired: callers that need exact
+/// rename pairing must use [`get_status`].
+pub fn get_status_paths<R: GixRepo + ?Sized>(repo: &R, paths: &[std::path::PathBuf]) -> Result<Vec<Delta>> {
+    let repo = repo.gix()?;
+    gix_workdir(&repo)?;
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let patterns: Vec<gix::bstr::BString> = paths
+        .iter()
+        .map(|p| format!(":(literal){}", p.to_string_lossy().replace('\\', "/")).into())
+        .collect();
+    let platform = repo
+        .status(gix::progress::Discard)
+        .map_err(gix_error)?
+        .untracked_files(gix::status::UntrackedFiles::Files)
+        .index_worktree_submodules(gix::status::Submodule::AsConfigured { check_dirty: true })
+        .index_worktree_rewrites(None);
+    let mut out = Vec::new();
+    for item in platform.into_index_worktree_iter(patterns).map_err(gix_error)? {
+        if let Some(delta) = worktree_delta(&item.map_err(gix_error)?) {
+            out.push(delta);
+        }
+    }
+    sort_deltas(&mut out);
+    out.dedup();
+    Ok(out)
+}
+
+/// `rel` (repository-relative) or one of its parent directories is a directory link (a Windows junction or
+/// directory symlink): its status needs the whole-tree pass of [`get_status`] (see `follow_linked_dirs`). Always
+/// `false` elsewhere, where links are plain entries for both libgit2 and gitoxide.
+pub fn under_linked_dir(workdir: &std::path::Path, rel: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        rel.ancestors()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .any(|dir| is_linked_dir(&workdir.join(dir)))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (workdir, rel);
+        false
+    }
+}
+
+fn gix_workdir(repo: &gix::Repository) -> Result<&std::path::Path> {
+    repo.workdir()
+        .ok_or_else(|| GitYasError::InvalidInput("this is a bare repository; it has no working tree".into()))
+}
+
+/// One index→worktree item, or `None` when it is no change (stat refresh, tracked directory contents).
+fn worktree_delta(item: &gix::status::index_worktree::Item) -> Option<Delta> {
+    use gix::status::index_worktree::Item;
+    use gix::status::plumbing::index_as_worktree::{Change, EntryStatus};
+    match item {
+        Item::Modification { rela_path, status, .. } => {
+            let change = match status {
+                EntryStatus::Conflict { .. } => DeltaChange::Conflicted,
+                EntryStatus::Change(Change::Removed) => DeltaChange::Deleted,
+                EntryStatus::Change(Change::Type { .. }) => DeltaChange::Typechange,
+                EntryStatus::Change(Change::Modification { .. }) => DeltaChange::Modified,
+                EntryStatus::Change(Change::SubmoduleModification(change)) => {
+                    if change.is_dirty() != Some(true) {
+                        return None;
+                    }
+                    DeltaChange::Modified
+                }
+                EntryStatus::IntentToAdd => DeltaChange::Added,
+                EntryStatus::NeedsUpdate(_) => return None,
+            };
+            Some(Delta {
+                path: path_from_bytes(rela_path),
+                old_path: None,
+                change,
+            })
+        }
+        Item::DirectoryContents { entry, .. } => (entry.status == gix::dir::entry::Status::Untracked).then(|| Delta {
+            path: untracked_path(entry),
+            old_path: None,
+            change: DeltaChange::Untracked,
+        }),
+        Item::Rewrite {
+            source,
+            dirwalk_entry,
+            copy,
+            ..
+        } => Some(Delta {
+            path: untracked_path(dirwalk_entry),
+            old_path: Some(path_from_bytes(source.rela_path())),
+            change: if *copy { DeltaChange::Copied } else { DeltaChange::Renamed },
+        }),
+    }
+}
+
+/// libgit2 names an untracked directory (a nested repository) with a trailing `/`.
+fn untracked_path(entry: &gix::dir::Entry) -> std::path::PathBuf {
+    let dir = matches!(
+        entry.disk_kind,
+        Some(gix::dir::entry::Kind::Directory | gix::dir::entry::Kind::Repository)
+    );
+    if dir {
+        let mut bytes = entry.rela_path.to_vec();
+        bytes.push(b'/');
+        path_from_bytes(&bytes)
+    } else {
+        path_from_bytes(&entry.rela_path)
+    }
+}
+
+/// One HEAD→index change.
+fn staged_delta(change: &gix::diff::index::Change) -> Option<Delta> {
+    use gix::diff::index::ChangeRef;
+    let (path, old_path, change) = match change {
+        ChangeRef::Addition { location, .. } => (location.as_ref(), None, DeltaChange::Added),
+        ChangeRef::Deletion { location, .. } => (location.as_ref(), None, DeltaChange::Deleted),
+        ChangeRef::Modification {
+            location,
+            previous_entry_mode,
+            entry_mode,
+            ..
+        } => {
+            let change = if mode_kind(*previous_entry_mode) == mode_kind(*entry_mode) {
+                DeltaChange::Modified
+            } else {
+                DeltaChange::Typechange
+            };
+            (location.as_ref(), None, change)
+        }
+        ChangeRef::Rewrite {
+            source_location,
+            location,
+            copy,
+            ..
+        } => (
+            location.as_ref(),
+            Some(source_location.as_ref()),
+            if *copy { DeltaChange::Copied } else { DeltaChange::Renamed },
+        ),
+    };
+    Some(Delta {
+        path: path_from_bytes(path),
+        old_path: old_path.map(|p| path_from_bytes(p)),
+        change,
+    })
+}
+
+/// File kind of an index mode: regular file (executable or not), symlink, submodule, or directory.
+fn mode_kind(mode: gix::index::entry::Mode) -> u8 {
+    use gix::index::entry::Mode;
+    if mode.contains(Mode::SYMLINK) {
+        1
+    } else if mode.contains(Mode::COMMIT) {
+        2
+    } else if mode.contains(Mode::DIR) {
+        3
+    } else {
+        0
+    }
+}
+
+/// The previous libgit2 implementation of [`get_status`] (same contract): the oracle of the parity tests.
+#[doc(hidden)]
+pub fn get_status_libgit2(repo: &Repository) -> Result<FileState> {
     #[cfg_attr(not(windows), allow(unused_variables))]
     let workdir = ensure_workdir(repo)?;
     let mut opts = status_options();
@@ -127,7 +344,7 @@ pub fn get_status(repo: &Repository) -> Result<FileState> {
         }
     }
     #[cfg(windows)]
-    follow_linked_dirs(repo, workdir, &mut state.unstaged)?;
+    follow_linked_dirs(workdir, &mut state.unstaged)?;
     sort_deltas(&mut state.staged);
     sort_deltas(&mut state.unstaged);
     Ok(state)
@@ -140,7 +357,7 @@ pub fn get_status(repo: &Repository) -> Result<FileState> {
 /// way `git status` would: tracked files are re-checked through the link (stat, then filtered content hash), and
 /// files the index does not know are listed as untracked unless ignored.
 #[cfg(windows)]
-fn follow_linked_dirs(repo: &Repository, workdir: &Path, unstaged: &mut Vec<Delta>) -> Result<()> {
+fn follow_linked_dirs(workdir: &Path, unstaged: &mut Vec<Delta>) -> Result<()> {
     let links: Vec<PathBuf> = unstaged
         .iter()
         .filter(|d| d.change == DeltaChange::Untracked && is_linked_dir(&workdir.join(&d.path)))
@@ -149,6 +366,9 @@ fn follow_linked_dirs(repo: &Repository, workdir: &Path, unstaged: &mut Vec<Delt
     if links.is_empty() {
         return Ok(());
     }
+    // Rare (Windows directory links holding tracked files): handled with libgit2.
+    let repo = Repository::open(workdir).map_err(git_error)?;
+    let repo = &repo;
     let index = repo.index().map_err(git_error)?;
     for link in links {
         let mut prefix = link.as_os_str().as_encoded_bytes().to_vec();

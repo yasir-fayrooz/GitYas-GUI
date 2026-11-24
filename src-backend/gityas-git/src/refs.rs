@@ -3,16 +3,18 @@
 //! `Reference::target` and `Tag::target` are always the **peeled commit** (the old code keyed annotated tags by
 //! the tag object id, so they never decorated their commit).
 
-use git2::{ErrorCode, ObjectType, Repository};
+use git2::{ErrorCode, Repository};
 use gityas_core::models::{BranchKind, CommitSignature, Reference, ReferenceKind, Tag, TagAnnotation};
 use gityas_core::{GitYasError, Oid, Result};
 
-use crate::convert::{oid_from_git, oid_to_git};
+use crate::convert::oid_to_git;
 use crate::git_error;
+use crate::gitoxide::{self, GixRepo, gix_error, oid_from_gix};
 use crate::remote::{RemoteContext, list_remote_refs, push_refspecs};
-use crate::repository::{git_signature, ref_exists, signature_from_git};
+use crate::repository::{git_signature, ref_exists};
+use gix::objs::Find as _;
 
-fn kind_of(name: &str) -> ReferenceKind {
+pub(crate) fn kind_of(name: &str) -> ReferenceKind {
     if name.starts_with("refs/heads/") {
         ReferenceKind::Branch(BranchKind::Local)
     } else if name.starts_with("refs/remotes/") {
@@ -28,79 +30,90 @@ fn kind_of(name: &str) -> ReferenceKind {
     }
 }
 
+/// libgit2's `git_reference__shorthand`.
+pub(crate) fn shorthand(name: &str) -> &str {
+    ["refs/heads/", "refs/tags/", "refs/remotes/", "refs/"]
+        .iter()
+        .find_map(|prefix| name.strip_prefix(prefix))
+        .unwrap_or(name)
+}
+
+/// A direct reference's name and the commit it peels to; `None` for symbolic refs, non-UTF-8 names (logged) and
+/// refs that do not peel to a commit.
+fn peeled_ref(reference: &mut gix::Reference<'_>) -> Option<(String, gix::ObjectId)> {
+    if matches!(reference.target(), gix::refs::TargetRef::Symbolic(_)) {
+        return None;
+    }
+    let bytes: &[u8] = reference.name().as_bstr();
+    let Ok(name) = std::str::from_utf8(bytes) else {
+        tracing::warn!(name = %String::from_utf8_lossy(bytes), "skipping reference with a non-UTF-8 name");
+        return None;
+    };
+    let name = name.to_owned();
+    match reference.peel_to_commit() {
+        Ok(commit) => Some((name, commit.id)),
+        Err(err) => {
+            tracing::debug!(%name, error = %format!("{err:#}"), "reference does not point at a commit");
+            None
+        }
+    }
+}
+
 /// All direct references (branches, remote branches, tags, notes, `refs/stash`, others), peeled to commits.
 /// Skipped: symbolic refs (`<remote>/HEAD`, which only alias another listed ref), refs not pointing (after
-/// peeling) at a commit (e.g. a tag of a tree, or the notes ref), and non-UTF-8 names (logged).
-pub fn list_references(repo: &Repository) -> Result<Vec<Reference>> {
-    let mut out = Vec::new();
-    for r in repo.references().map_err(git_error)? {
-        let r = r.map_err(git_error)?;
-        if r.kind() == Some(git2::ReferenceType::Symbolic) {
-            continue;
-        }
-        let Some(name) = r.name().map(str::to_owned) else {
-            tracing::warn!(name = %String::from_utf8_lossy(r.name_bytes()), "skipping reference with a non-UTF-8 name");
-            continue;
-        };
-        let commit = match r.peel(ObjectType::Commit) {
-            Ok(c) => c,
-            Err(e) if matches!(e.code(), ErrorCode::InvalidSpec | ErrorCode::NotFound | ErrorCode::Peel) => {
-                tracing::debug!(%name, "reference does not point at a commit");
-                continue;
-            }
-            Err(e) => return Err(git_error(e)),
-        };
-        out.push(Reference {
-            short_name: r.shorthand().map_or_else(|| name.clone(), str::to_owned),
-            kind: kind_of(&name),
-            target: oid_from_git(commit.id())?,
-            name,
-        });
-    }
-    Ok(out)
+/// peeling) at a commit (e.g. a tag of a tree, or the notes ref), and non-UTF-8 names (logged). Read with gitoxide.
+pub fn list_references<R: GixRepo + ?Sized>(repo: &R) -> Result<Vec<Reference>> {
+    crate::refscan::scan_refs_once(repo)?.0.references()
 }
 
-/// All tags pointing (after peeling) at commits, with the annotation for annotated tags.
-pub fn list_tags(repo: &Repository) -> Result<Vec<Tag>> {
-    let mut out = Vec::new();
-    for r in repo.references_glob("refs/tags/*").map_err(git_error)? {
-        let r = r.map_err(git_error)?;
-        let Some(name) = r.name().and_then(|n| n.strip_prefix("refs/tags/")).map(str::to_owned) else {
-            tracing::warn!(name = %String::from_utf8_lossy(r.name_bytes()), "skipping tag with a non-UTF-8 name");
-            continue;
-        };
-        let Some(tag) = tag_from_ref(repo, &name, &r)? else { continue };
-        out.push(tag);
-    }
-    Ok(out)
+/// All tags pointing (after peeling) at commits, with the annotation for annotated tags. Read with gitoxide.
+pub fn list_tags<R: GixRepo + ?Sized>(repo: &R) -> Result<Vec<Tag>> {
+    let (snapshot, repo) = crate::refscan::scan_refs_once(repo)?;
+    snapshot.tags(&repo)
 }
 
-fn tag_from_ref(repo: &Repository, name: &str, r: &git2::Reference<'_>) -> Result<Option<Tag>> {
-    let commit = match r.peel(ObjectType::Commit) {
-        Ok(c) => c,
-        Err(e) if matches!(e.code(), ErrorCode::InvalidSpec | ErrorCode::NotFound | ErrorCode::Peel) => return Ok(None),
-        Err(e) => return Err(git_error(e)),
+/// The tag behind `reference` (a `refs/tags/*` ref), or `None` if it does not peel to a commit.
+fn tag_from_reference(repo: &gix::Repository, reference: &mut gix::Reference<'_>, buf: &mut Vec<u8>) -> Result<Option<Tag>> {
+    let direct = reference.try_id().map(|id| id.detach());
+    let Some((refname, commit)) = peeled_ref(reference) else {
+        return Ok(None);
     };
-    let annotation = match r.target() {
-        Some(oid) => match repo.find_tag(oid) {
-            Ok(tag) => Some(TagAnnotation {
-                // Display text; non-UTF-8 tag messages are decoded lossily.
-                message: tag
-                    .message_bytes()
-                    .map(|m| String::from_utf8_lossy(m).into_owned())
-                    .unwrap_or_default(),
-                tagger: tag.tagger().map(|s| signature_from_git(&s)),
-            }),
-            Err(e) if matches!(e.code(), ErrorCode::NotFound | ErrorCode::InvalidSpec) => None,
-            Err(e) => return Err(git_error(e)),
-        },
-        None => None,
+    let Some(name) = refname.strip_prefix("refs/tags/") else {
+        return Ok(None);
     };
     Ok(Some(Tag {
         name: name.to_owned(),
-        target: oid_from_git(commit.id())?,
-        annotation,
+        target: oid_from_gix(&commit)?,
+        annotation: direct.and_then(|id| annotation(repo, &id, buf)),
     }))
+}
+
+/// The annotation of tag object `id` (`None` when `id` is not a tag object). The message is everything after the
+/// header, signature included, as libgit2's `git_tag_message` (gitoxide splits the signature off); display text,
+/// decoded lossily.
+pub(crate) fn annotation(repo: &gix::Repository, id: &gix::oid, buf: &mut Vec<u8>) -> Option<TagAnnotation> {
+    let data = match repo.objects.try_find(id, buf) {
+        Ok(Some(data)) if data.kind == gix::object::Kind::Tag => data,
+        Ok(_) => return None,
+        Err(err) => {
+            tracing::debug!(error = %format!("{err:#}"), "unreadable tag object");
+            return None;
+        }
+    };
+    let raw = data.data;
+    let tagger = gix::objs::TagRef::from_bytes(raw, data.object_hash)
+        .ok()
+        .and_then(|tag| tag.tagger().ok().flatten())
+        .map(|sig| CommitSignature {
+            name: String::from_utf8_lossy(gitoxide::trim(sig.name)).into_owned(),
+            email: String::from_utf8_lossy(gitoxide::trim(sig.email)).into_owned(),
+        });
+    let message = raw.windows(2).position(|w| w == b"\n\n").map_or(&[][..], |at| &raw[at + 2..]);
+    let message = message.iter().position(|&b| b == 0).map_or(message, |nul| &message[..nul]);
+    Some(TagAnnotation {
+        message: String::from_utf8_lossy(message).into_owned(),
+        tagger,
+    })
 }
 
 fn normalize_tag_name(name: &str) -> Result<String> {
@@ -138,8 +151,10 @@ pub fn create_tag(repo: &Repository, name: &str, target: &Oid, message: Option<&
             repo.tag_lightweight(&name, commit.as_object(), false).map_err(exists)?;
         }
     }
-    let r = repo.find_reference(&format!("refs/tags/{name}")).map_err(git_error)?;
-    tag_from_ref(repo, &name, &r)?.ok_or_else(|| GitYasError::Other(format!("tag {name:?} was created but cannot be read back")))
+    let gix_repo = repo.gix()?;
+    let mut reference = gix_repo.find_reference(format!("refs/tags/{name}").as_str()).map_err(gix_error)?;
+    tag_from_reference(&gix_repo, &mut reference, &mut Vec::new())?
+        .ok_or_else(|| GitYasError::Other(format!("tag {name:?} was created but cannot be read back")))
 }
 
 /// Deletes local tag `name` (`v1` or `refs/tags/v1`).

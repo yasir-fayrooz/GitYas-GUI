@@ -157,6 +157,9 @@ fn reachable(commits: &[Commit], tip: Oid, max: usize) -> Vec<Commit> {
     out
 }
 
+/// Repositories whose data the store keeps after switching away (the engine keeps as many histories in memory).
+pub const RECENT_REPOS: usize = 6;
+
 #[derive(Debug, Default)]
 pub struct Store {
     /// `Engine::start` finished (the loading frame is replaced by the normal UI).
@@ -170,6 +173,10 @@ pub struct Store {
     pub active: Option<RepoId>,
     /// Data of the active repository; `None` when no repository is open.
     pub repo: Option<RepoData>,
+    /// Data of recently active repositories, most recent first (at most [`RECENT_REPOS`]). When the engine switches
+    /// back to one of them it is shown at once, slightly stale, while the engine's refresh (from its in-memory
+    /// history) brings it up to date.
+    recent: Vec<RepoData>,
     pub settings: Settings,
     /// Connection state per provider (`Provider::ALL` order once `auth_status` / events arrived).
     pub auth: Vec<(Provider, bool)>,
@@ -204,6 +211,8 @@ impl Store {
         match event {
             AppEvent::RepositoriesUpdated(repos) => {
                 self.repositories = repos;
+                let repositories = &self.repositories;
+                self.recent.retain(|r| repositories.iter().any(|known| known.id == r.id));
                 // Drop tabs of removed repositories. Keep "no active tab" as it is (like the engine's own
                 // `normalize_tabs`): `OpenTabs::normalize` would make the first tab active with no session running.
                 let known: Vec<&str> = self.repositories.iter().map(|r| r.id.as_str()).collect();
@@ -215,7 +224,22 @@ impl Store {
             }
             AppEvent::SelectedRepositoryUpdated(id) => {
                 if self.repo.as_ref().map(|r| &r.id) != id.as_ref() {
-                    self.repo = id.clone().map(RepoData::new);
+                    if let Some(previous) = self.repo.take().filter(RepoData::is_ready) {
+                        self.recent.retain(|r| r.id != previous.id);
+                        self.recent.insert(0, previous);
+                        self.recent.truncate(RECENT_REPOS);
+                    }
+                    let max = self.settings.graph.max_commits;
+                    self.repo = id.clone().map(|id| match self.recent.iter().position(|r| r.id == id) {
+                        Some(at) => {
+                            let mut restored = self.recent.remove(at);
+                            if restored.limit_commits(max) {
+                                restored.rebuild();
+                            }
+                            restored
+                        }
+                        None => RepoData::new(id),
+                    });
                 }
                 self.active = id;
             }
@@ -361,6 +385,108 @@ mod tests {
         settings.graph.max_commits = 0;
         store.set_settings(settings);
         assert_eq!(shown(&store).map(|s| s.0), Some(1), "always at least one");
+    }
+
+    /// A repository whose history and head have arrived (ready to draw).
+    fn loaded(store: &mut Store, id: &str, commits: Vec<Commit>) {
+        opened(store, id);
+        store.apply(AppEvent::CommitsUpdated {
+            repo: id.into(),
+            commits: CommitWrapper {
+                commits: commits.into(),
+                ..CommitWrapper::default()
+            },
+        });
+        store.apply(AppEvent::CommitsHeadUpdated {
+            repo: id.into(),
+            head: Some(Head::Detached { target: oid(1) }),
+        });
+    }
+
+    fn known(ids: &[&str]) -> AppEvent {
+        AppEvent::RepositoriesUpdated(
+            ids.iter()
+                .map(|id| Repository {
+                    id: (*id).into(),
+                    name: (*id).into(),
+                    path: std::path::PathBuf::from(id),
+                    provider: None,
+                    sort_order: 0,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn switching_back_restores_the_previous_data_at_once() {
+        let mut store = Store::default();
+        store.apply(known(&["a", "b"]));
+        loaded(&mut store, "a", vec![commit(2, &[1]), commit(1, &[])]);
+        let a_graph = store.repo.as_ref().map(|r| Arc::clone(&r.graph));
+        loaded(&mut store, "b", vec![commit(9, &[])]);
+
+        opened(&mut store, "a");
+        let repo = store.repo.as_ref().unwrap_or_else(|| panic!("a is open"));
+        assert!(repo.is_ready(), "drawn before the engine's refresh arrives");
+        assert_eq!(repo.commits.commits.len(), 2);
+        assert!(
+            a_graph.is_some_and(|g| Arc::ptr_eq(&g, &repo.graph)),
+            "layout reused, not recomputed"
+        );
+
+        // Events for the restored repository update it as usual.
+        store.apply(AppEvent::CommitsUpdated {
+            repo: "a".into(),
+            commits: CommitWrapper {
+                commits: vec![commit(3, &[2]), commit(2, &[1]), commit(1, &[])].into(),
+                ..CommitWrapper::default()
+            },
+        });
+        assert_eq!(store.repo.as_ref().map(|r| r.commits.commits.len()), Some(3));
+        // And b is still remembered.
+        opened(&mut store, "b");
+        assert_eq!(
+            store.repo.as_ref().map(|r| (r.is_ready(), r.commits.commits.len())),
+            Some((true, 1))
+        );
+    }
+
+    #[test]
+    fn restored_data_follows_settings_and_removed_repositories_are_forgotten() {
+        let mut store = Store::default();
+        store.apply(known(&["a", "b"]));
+        loaded(&mut store, "a", vec![commit(3, &[2]), commit(2, &[1]), commit(1, &[])]);
+        loaded(&mut store, "b", vec![commit(9, &[])]);
+        let mut settings = Settings::default();
+        settings.graph.max_commits = 1;
+        store.set_settings(settings);
+        opened(&mut store, "a");
+        assert_eq!(
+            store.repo.as_ref().map(|r| r.commits.commits.len()),
+            Some(1),
+            "re-cut to the new maximum"
+        );
+
+        store.apply(known(&["a"]));
+        opened(&mut store, "b");
+        assert!(
+            !store.repo.as_ref().is_some_and(RepoData::is_ready),
+            "b was removed: nothing to restore"
+        );
+    }
+
+    #[test]
+    fn only_the_most_recent_repositories_are_kept() {
+        let mut store = Store::default();
+        let ids: Vec<String> = (0..=RECENT_REPOS + 1).map(|i| format!("r{i}")).collect();
+        store.apply(known(&ids.iter().map(String::as_str).collect::<Vec<_>>()));
+        for id in &ids {
+            loaded(&mut store, id, vec![commit(1, &[])]);
+        }
+        opened(&mut store, &ids[0]);
+        assert!(!store.repo.as_ref().is_some_and(RepoData::is_ready), "the oldest was evicted");
+        opened(&mut store, &ids[2]);
+        assert!(store.repo.as_ref().is_some_and(RepoData::is_ready));
     }
 
     #[test]

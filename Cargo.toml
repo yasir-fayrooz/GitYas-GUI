@@ -3,7 +3,7 @@ resolver = "3"
 members = ["src-frontend", "src-backend/gityas-*"]
 
 [workspace.package]
-version = "1.0.1"
+version = "1.1.0"
 edition = "2024"
 authors = ["Yasir Fayrooz"]
 license = "MIT"
@@ -43,6 +43,22 @@ nanoid = "0.4"
 # the macOS app does not depend on a Homebrew dylib, and cross-compiling from Windows works (needs perl + make:
 # docs/releasing.md).
 git2 = { version = "0.20", features = ["vendored-openssl"] }
+# gitoxide: history loading (rev walks, commit decoding, refs, merge-base / ahead-behind) and fetch / clone. git2
+# keeps everything that writes the working tree or pushes (gix has no push, stash, apply, checkout or reset yet).
+# `max-performance`: parallel pack decoding and LRU pack caches. HTTPS goes through reqwest + native-tls (Schannel
+# on Windows, Security.framework on macOS, the vendored OpenSSL git2 already builds on Linux); SSH runs the system
+# `ssh`, so ssh-agent, `~/.ssh/config` and passphrase-protected keys work as they do for the git CLI.
+gix = { version = "0.91", default-features = false, features = [
+    "max-performance",
+    "sha1",
+    "revision",
+    "blocking-http-transport-reqwest-native-tls",
+    "credentials",
+    "progress-tree",
+    # Errors keep their cause chain (`{err:#}` shows the whole chain in one line, as user-facing messages need).
+    "auto-chain-error",
+    "worktree-mutation",
+] }
 
 # Storage
 rusqlite = { version = "0.37", features = ["bundled"] }

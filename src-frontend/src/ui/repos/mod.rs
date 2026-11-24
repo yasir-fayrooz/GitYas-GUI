@@ -131,6 +131,15 @@ pub fn opening_label(app: &GitYasApp) -> Option<String> {
     Some(format!("Opening {name}…"))
 }
 
+/// A tab switch is queued or running and the engine has not switched to that repository yet (until then the store
+/// still holds the previous repository, which must not be shown under the new tab).
+pub fn switch_pending(app: &GitYasApp) -> bool {
+    app.repos_ui
+        .opening
+        .as_ref()
+        .is_some_and(|id| app.store.active.as_ref() != Some(id))
+}
+
 /// Opens `id` in a tab (adding the tab if needed), makes it active and persists the tabs.
 pub fn switch_to(app: &mut GitYasApp, id: RepoId) {
     app.store.open_tabs.open(id.clone());

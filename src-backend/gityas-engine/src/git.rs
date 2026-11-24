@@ -14,7 +14,7 @@ use gityas_core::models::{
     MergeConflict, MergeOutcome, PullOutcome, PushOutcome, RemoteOp, ResetMode, StashApplyOutcome, StashDetails, Worktree, WorktreeBranch,
 };
 use gityas_core::{GitYasError, Oid, Result};
-use gityas_git::{branches, commits, diff, merge, refs, remote, repository, stash, status, worktree, worktrees};
+use gityas_git::{branches, commits, diff, merge, refs, remote, repository, stash, worktree, worktrees};
 
 use crate::refresh::{Refresh, refresh_blocking};
 use crate::session::SessionCtx;
@@ -383,7 +383,8 @@ impl Engine {
     // ---- Working tree ----------------------------------------------------------------------------------------------
 
     pub async fn file_state(&self) -> Result<FileState> {
-        self.with_repo(|_, _, repo| status::get_status(repo)).await
+        self.with_repo(|inner, ctx, repo| crate::worktree_status::load(inner, ctx, repo, None))
+            .await
     }
 
     pub async fn stage_files(&self, files: Vec<Delta>) -> Result<()> {

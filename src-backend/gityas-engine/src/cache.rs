@@ -4,8 +4,11 @@
 //!
 //! 1. Cache disabled (`EngineOptions::use_commit_cache = false`) or bypassed (shallow repo, grafts, replace refs:
 //!    [`gityas_git::cache::should_bypass_cache`]) ⇒ live walk ([`gityas_git::commits::get_commits_live`]).
-//! 2. Otherwise read the ref tips live and fingerprint them.
-//!    * Equal to the in-memory hot entry of this engine (same repository) ⇒ return that `Arc` (no SQLite, no walk).
+//! 2. Otherwise read the ref tips live and fingerprint them. All refs are read once per load into a
+//!    [`RefSnapshot`] (tips, the reference list and the tag list come from it), through a per-repository
+//!    [`RefScanCache`] so unchanged loose ref files are not read again.
+//!    * Equal to one of this engine's in-memory hot entries (the last [`HOT_REPOS`] repositories loaded) ⇒ return
+//!      that `Arc` (no SQLite, no walk). Switching back to a recently open repository therefore costs one ref read.
 //!    * Equal to the stored fingerprint ⇒ serve from [`CacheDb::load_reachable`] (zero walking).
 //!    * Different ⇒ `walk_new_commits(new tips, stored tips)`, `store_refresh` (one transaction), throttled `gc`,
 //!      then `load_reachable`. A cold fill (no snapshot) walks everything and sorts the walked rows directly.
@@ -14,7 +17,8 @@
 //!    rebuilds from a full walk; any storage error is logged, the whole cache is `reset()`, and the history comes from
 //!    a full walk which is then stored again. Only git errors (the live walk would fail too) are returned.
 //!
-//! References, tags and HEAD are always read live. Remote tag names are not part of it (network: `Engine::remote_tag_names`).
+//! Everything reads through gitoxide (one `gix::Repository` per load, see [`load_history`]). References, tags and
+//! HEAD are always read live. Remote tag names are not part of it (network: `Engine::remote_tag_names`).
 //!
 //! [`CacheDb::load_reachable`]: gityas_storage::CacheDb::load_reachable
 
@@ -25,8 +29,10 @@ use std::time::Instant;
 
 use gityas_core::models::{Commit, CommitWrapper, Delta, RefTip, RefsFingerprint};
 use gityas_core::{AppEvent, GitYasError, Oid, RepoId, Result};
-use gityas_git::cache::{fingerprint, ref_tips, should_bypass_cache, walk_new_commits};
-use gityas_git::commits::{get_commit_files_list, get_commits_live, retain_reachable, sort_commits};
+use gityas_git::cache::{fingerprint, should_bypass_cache, walk_new_commits};
+use gityas_git::commits::{get_commit_files_list, get_commits_live_from, retain_reachable, sort_commits};
+use gityas_git::gitoxide::GixRepo;
+use gityas_git::refscan::{RefScanCache, RefSnapshot};
 
 use crate::session::SessionCtx;
 use crate::{Engine, Inner};
@@ -39,8 +45,11 @@ mod tests;
 /// In-process state of the commit-graph cache, one per engine (`Inner::commit_graph`).
 #[derive(Default)]
 pub(crate) struct CommitGraphState {
-    /// History of the last cached load: served again without touching SQLite while the fingerprint is unchanged.
-    hot: Mutex<Option<HotEntry>>,
+    /// Histories of the last cached loads, most recently used first, at most one per repository: served again
+    /// without touching SQLite while the fingerprint is unchanged. Bounded by [`HOT_REPOS`] and [`HOT_MAX_COMMITS`].
+    hot: Mutex<Vec<HotEntry>>,
+    /// Ref scan state of the last [`HOT_REPOS`] repositories, most recently used first.
+    ref_scans: Mutex<Vec<(RepoId, RefScanCache)>>,
     /// Last GC per repository (GC is throttled by `EngineOptions::cache_gc_interval`).
     last_gc: Mutex<HashMap<RepoId, Instant>>,
     pub(crate) stats: CacheStats,
@@ -48,6 +57,12 @@ pub(crate) struct CommitGraphState {
     #[cfg(test)]
     pub(crate) fail_next_load: std::sync::atomic::AtomicBool,
 }
+
+/// Repositories whose history stays in memory (repository switches within this set skip SQLite entirely).
+pub(crate) const HOT_REPOS: usize = 6;
+
+/// Commits kept across all hot entries (a row is roughly 200 bytes); the most recent entry is always kept.
+pub(crate) const HOT_MAX_COMMITS: usize = 1_500_000;
 
 struct HotEntry {
     repo: RepoId,
@@ -106,12 +121,42 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// History + live refs for `CommitsUpdated`. Blocking; called with the command lock held (or from a watcher task).
-pub(crate) fn load_commits(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repository) -> Result<CommitWrapper> {
-    let (commits, _) = load_history(inner, ctx, repo)?;
+pub(crate) fn load_commits<R: GixRepo + ?Sized>(inner: &Inner, ctx: &SessionCtx, repo: &R) -> Result<CommitWrapper> {
+    let repo = repo.gix()?;
+    let (snapshot, tips) = read_refs(inner, ctx, &repo)?;
+    let (commits, _) = load_history_from(inner, ctx, &repo, tips)?;
     Ok(CommitWrapper {
         commits,
-        ..load_refs(repo)?
+        ..load_refs(&repo, &snapshot)?
     })
+}
+
+/// Every ref of `repo` (one scan, through this repository's [`RefScanCache`]) and the history tips.
+pub(crate) fn read_refs(inner: &Inner, ctx: &SessionCtx, repo: &gix::Repository) -> Result<(RefSnapshot, Vec<RefTip>)> {
+    let started = Instant::now();
+    let mut cache = {
+        let mut scans = lock(&inner.commit_graph.ref_scans);
+        scans
+            .iter()
+            .position(|(id, _)| *id == ctx.repo_id)
+            .map(|at| scans.remove(at).1)
+            .unwrap_or_default()
+    };
+    let scanned = gityas_git::refscan::scan_refs(repo, &mut cache);
+    {
+        let mut scans = lock(&inner.commit_graph.ref_scans);
+        scans.insert(0, (ctx.repo_id.clone(), cache));
+        scans.truncate(HOT_REPOS);
+    }
+    let snapshot = scanned?;
+    let tips = snapshot.tips(gityas_git::refscan::head_commit(repo)?)?;
+    tracing::debug!(
+        repo = %ctx.repo_id,
+        refs = snapshot.refs.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "refs read"
+    );
+    Ok((snapshot, tips))
 }
 
 /// A quick first page for `CommitsUpdated` (`partial`): the newest `GraphOptions::max_commits` commits, read
@@ -119,19 +164,21 @@ pub(crate) fn load_commits(inner: &Inner, ctx: &SessionCtx, repo: &git2::Reposit
 /// switching back to it: the full load then goes through SQLite or a cold walk, which takes a while on a long
 /// history). `None` when the full load is about as fast (hot entry, history no longer than the page) or on any
 /// error (logged; the full load follows anyway).
-pub(crate) fn preview_commits(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repository) -> Option<CommitWrapper> {
-    if lock(&inner.commit_graph.hot).as_ref().is_some_and(|hot| hot.repo == ctx.repo_id) {
+pub(crate) fn preview_commits<R: GixRepo + ?Sized>(inner: &Inner, ctx: &SessionCtx, repo: &R) -> Option<CommitWrapper> {
+    if lock(&inner.commit_graph.hot).iter().any(|hot| hot.repo == ctx.repo_id) {
         return None;
     }
     let preview = || -> Result<Option<CommitWrapper>> {
+        let repo = repo.gix()?;
         let max = inner.storage.user().settings()?.graph.max_commits.max(1);
-        let Some(commits) = gityas_git::commits::get_commits_newest(repo, max)? else {
+        let (snapshot, tips) = read_refs(inner, ctx, &repo)?;
+        let Some(commits) = gityas_git::commits::get_commits_newest_from(&repo, &tips, max)? else {
             return Ok(None);
         };
         Ok(Some(CommitWrapper {
             partial: true,
             commits: Arc::from(commits),
-            ..load_refs(repo)?
+            ..load_refs(&repo, &snapshot)?
         }))
     };
     let started = Instant::now();
@@ -155,20 +202,28 @@ pub(crate) fn preview_commits(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repo
 }
 
 /// The live refs, tags and HEAD of a [`CommitWrapper`] (no commits).
-fn load_refs(repo: &git2::Repository) -> Result<CommitWrapper> {
+fn load_refs(repo: &gix::Repository, snapshot: &RefSnapshot) -> Result<CommitWrapper> {
     Ok(CommitWrapper {
         commits: Arc::from([]),
-        references: Arc::from(gityas_git::refs::list_references(repo)?),
-        tags: Arc::from(gityas_git::refs::list_tags(repo)?),
+        references: Arc::from(snapshot.references()?),
+        tags: Arc::from(snapshot.tags(repo)?),
         head: Some(gityas_git::commits::get_head(repo)?),
         partial: false,
     })
 }
 
 /// The history in display order and where it came from. See the module docs for the algorithm.
-pub(crate) fn load_history(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repository) -> Result<History> {
+#[cfg(test)]
+pub(crate) fn load_history<R: GixRepo + ?Sized>(inner: &Inner, ctx: &SessionCtx, repo: &R) -> Result<History> {
+    let repo = repo.gix()?;
+    let (_, tips) = read_refs(inner, ctx, &repo)?;
+    load_history_from(inner, ctx, &repo, tips)
+}
+
+/// [`load_history`] with the tips already read.
+fn load_history_from(inner: &Inner, ctx: &SessionCtx, repo: &gix::Repository, tips: Vec<RefTip>) -> Result<History> {
     let started = Instant::now();
-    let result = load_history_inner(inner, ctx, repo);
+    let result = load_history_inner(inner, ctx, repo, tips);
     if let Ok((commits, source)) = &result {
         tracing::debug!(
             repo = %ctx.repo_id,
@@ -181,21 +236,20 @@ pub(crate) fn load_history(inner: &Inner, ctx: &SessionCtx, repo: &git2::Reposit
     result
 }
 
-fn load_history_inner(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repository) -> Result<History> {
+fn load_history_inner(inner: &Inner, ctx: &SessionCtx, repo: &gix::Repository, tips: Vec<RefTip>) -> Result<History> {
     let state = &inner.commit_graph;
     if !inner.options.use_commit_cache {
-        return Ok((live_walk(state, repo)?, Source::Disabled));
+        return Ok((live_walk(state, repo, &tips)?, Source::Disabled));
     }
     match should_bypass_cache(repo) {
         Ok(false) => {}
-        Ok(true) => return Ok((live_walk(state, repo)?, Source::Bypassed)),
+        Ok(true) => return Ok((live_walk(state, repo, &tips)?, Source::Bypassed)),
         Err(err) => {
             tracing::warn!(repo = %ctx.repo_id, "cannot tell whether to bypass the commit cache; live walk: {err}");
-            return Ok((live_walk(state, repo)?, Source::Bypassed));
+            return Ok((live_walk(state, repo, &tips)?, Source::Bypassed));
         }
     }
 
-    let tips = ref_tips(repo)?;
     let fp = fingerprint(&tips);
     if let Some(commits) = hot_lookup(state, &ctx.repo_id, &fp) {
         return Ok((commits, Source::Hot));
@@ -232,7 +286,7 @@ enum CacheFailure {
 fn cached_history(
     inner: &Inner,
     ctx: &SessionCtx,
-    repo: &git2::Repository,
+    repo: &gix::Repository,
     tips: &[RefTip],
     fp: &RefsFingerprint,
 ) -> std::result::Result<Option<History>, CacheFailure> {
@@ -309,7 +363,7 @@ fn extend(previous: &[Commit], known: &HashSet<&Oid>, rows: Vec<Commit>, tips: &
 }
 
 /// Full walk from `tips`, stored as a fresh snapshot. A store failure is logged, never returned.
-fn rebuild(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repository, tips: &[RefTip], fp: &RefsFingerprint) -> Result<Arc<[Commit]>> {
+fn rebuild(inner: &Inner, ctx: &SessionCtx, repo: &gix::Repository, tips: &[RefTip], fp: &RefsFingerprint) -> Result<Arc<[Commit]>> {
     let rows = walk(&inner.commit_graph, repo, tips, &[])?;
     if let Err(err) = store(inner, ctx, &rows, tips, fp) {
         tracing::warn!(repo = %ctx.repo_id, "storing the rebuilt commit cache failed: {err}");
@@ -340,7 +394,7 @@ fn store(inner: &Inner, ctx: &SessionCtx, rows: &[Commit], tips: &[RefTip], fp: 
     Ok(())
 }
 
-fn walk(state: &CommitGraphState, repo: &git2::Repository, tips: &[RefTip], old_tips: &[RefTip]) -> Result<Vec<Commit>> {
+fn walk(state: &CommitGraphState, repo: &gix::Repository, tips: &[RefTip], old_tips: &[RefTip]) -> Result<Vec<Commit>> {
     CacheStats::bump(&state.stats.walks, 1);
     let rows = walk_new_commits(repo, tips, old_tips)?;
     CacheStats::bump(&state.stats.walked_commits, rows.len() as u64);
@@ -348,40 +402,67 @@ fn walk(state: &CommitGraphState, repo: &git2::Repository, tips: &[RefTip], old_
 }
 
 /// [`gityas_git::cache::walk_until_known`] with stats.
-fn walk_until_known(state: &CommitGraphState, repo: &git2::Repository, tips: &[RefTip], known: &HashSet<&Oid>) -> Result<Vec<Commit>> {
+fn walk_until_known(state: &CommitGraphState, repo: &gix::Repository, tips: &[RefTip], known: &HashSet<&Oid>) -> Result<Vec<Commit>> {
     CacheStats::bump(&state.stats.walks, 1);
     let rows = gityas_git::cache::walk_until_known(repo, tips, known)?;
     CacheStats::bump(&state.stats.walked_commits, rows.len() as u64);
     Ok(rows)
 }
 
-fn live_walk(state: &CommitGraphState, repo: &git2::Repository) -> Result<Arc<[Commit]>> {
+fn live_walk(state: &CommitGraphState, repo: &gix::Repository, tips: &[RefTip]) -> Result<Arc<[Commit]>> {
     CacheStats::bump(&state.stats.walks, 1);
-    let commits = get_commits_live(repo)?;
+    let commits = get_commits_live_from(repo, tips)?;
     CacheStats::bump(&state.stats.walked_commits, commits.len() as u64);
     Ok(Arc::from(commits))
 }
 
-fn hot_lookup(state: &CommitGraphState, repo: &RepoId, fp: &RefsFingerprint) -> Option<Arc<[Commit]>> {
-    lock(&state.hot)
-        .as_ref()
-        .filter(|hot| hot.repo == *repo && hot.fingerprint == *fp)
+/// The most recent in-memory history of `repo` (any fingerprint): closed under parents, so graph questions about
+/// commits it contains (ahead/behind) have exact answers in it.
+pub(crate) fn hot_history(inner: &Inner, repo: &RepoId) -> Option<Arc<[Commit]>> {
+    lock(&inner.commit_graph.hot)
+        .iter()
+        .find(|hot| hot.repo == *repo)
         .map(|hot| Arc::clone(&hot.commits))
 }
 
-fn hot_store(state: &CommitGraphState, repo: &RepoId, fingerprint: RefsFingerprint, commits: Arc<[Commit]>) {
-    *lock(&state.hot) = Some(HotEntry {
-        repo: repo.clone(),
-        fingerprint,
-        commits,
-    });
+fn hot_lookup(state: &CommitGraphState, repo: &RepoId, fp: &RefsFingerprint) -> Option<Arc<[Commit]>> {
+    let mut hot = lock(&state.hot);
+    let at = hot.iter().position(|h| h.repo == *repo && h.fingerprint == *fp)?;
+    let entry = hot.remove(at);
+    let commits = Arc::clone(&entry.commits);
+    hot.insert(0, entry);
+    Some(commits)
 }
 
-/// Drops the hot entry (for `repo`, or any with `None`).
+fn hot_store(state: &CommitGraphState, repo: &RepoId, fingerprint: RefsFingerprint, commits: Arc<[Commit]>) {
+    let mut hot = lock(&state.hot);
+    hot.retain(|h| h.repo != *repo);
+    hot.insert(
+        0,
+        HotEntry {
+            repo: repo.clone(),
+            fingerprint,
+            commits,
+        },
+    );
+    let mut total = 0;
+    let keep = hot
+        .iter()
+        .take_while(|h| {
+            total += h.commits.len();
+            total <= HOT_MAX_COMMITS
+        })
+        .count()
+        .clamp(1, HOT_REPOS);
+    hot.truncate(keep);
+}
+
+/// Drops the hot entry of `repo`, or all of them with `None`.
 fn hot_clear(state: &CommitGraphState, repo: Option<&RepoId>) {
     let mut hot = lock(&state.hot);
-    if repo.is_none_or(|repo| hot.as_ref().is_some_and(|h| h.repo == *repo)) {
-        *hot = None;
+    match repo {
+        Some(repo) => hot.retain(|h| h.repo != *repo),
+        None => hot.clear(),
     }
 }
 
@@ -397,6 +478,7 @@ fn reset_cache(inner: &Inner) {
 /// Drops every cached row for `repo` (called by `delete_repository`). Blocking.
 pub(crate) fn purge_repository(inner: &Inner, repo: &RepoId) -> Result<()> {
     hot_clear(&inner.commit_graph, Some(repo));
+    lock(&inner.commit_graph.ref_scans).retain(|(id, _)| id != repo);
     lock(&inner.commit_graph.last_gc).remove(repo);
     inner.storage.cache().purge_repository(repo)
 }

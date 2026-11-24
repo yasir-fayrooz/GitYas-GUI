@@ -67,6 +67,45 @@ fn fetch_reports_updates_and_prunes() {
     assert!(fx.work.find_reference("refs/remotes/origin/temp").is_err());
 }
 
+/// Pruning (implemented here, gitoxide has none) only removes `origin`'s tracking refs that the remote no longer has:
+/// never tags (no `--prune-tags`), the symbolic `origin/HEAD`, or another remote's refs.
+#[test]
+fn prune_keeps_tags_symbolic_heads_and_other_remotes() {
+    let fx = Fixture::new();
+    let creds = NoCredentials;
+    remote::fetch(&fx.work, Some("origin"), false, &ctx(&creds)).unwrap();
+    let head = fx.work.head().unwrap().target().unwrap();
+    fx.work
+        .tag_lightweight("local-only", &fx.work.find_object(head, None).unwrap(), false)
+        .unwrap();
+    fx.work
+        .reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", true, "")
+        .unwrap();
+    fx.work.remote("upstream", "https://example.invalid/x.git").unwrap();
+    fx.work.reference("refs/remotes/upstream/main", head, true, "").unwrap();
+    fx.work.reference("refs/remotes/origin/gone", head, true, "").unwrap();
+
+    let summary = remote::fetch(&fx.work, Some("origin"), true, &ctx(&creds)).unwrap();
+    assert!(
+        fx.work.find_reference("refs/remotes/origin/gone").is_err(),
+        "stale tracking ref is pruned"
+    );
+    assert!(
+        summary.fetched[0]
+            .updated
+            .iter()
+            .any(|u| u.refname == "refs/remotes/origin/gone" && u.new.is_none())
+    );
+    for kept in [
+        "refs/tags/local-only",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/upstream/main",
+        "refs/remotes/origin/main",
+    ] {
+        assert!(fx.work.find_reference(kept).is_ok(), "{kept} must survive pruning");
+    }
+}
+
 #[test]
 fn fetch_all_survives_one_broken_remote() {
     let fx = Fixture::new();
@@ -338,6 +377,8 @@ fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) 
 }
 
 /// Bug #10: a remote that rejects every credential must terminate with an auth error after the attempt cap.
+/// Fetch goes through gitoxide, which never sends credentials over unencrypted `http://` (libgit2 sent the token
+/// once): it terminates right away with an error that says so, and the token never leaves the machine.
 #[test]
 fn rejected_token_terminates_with_auth_error() {
     let Some(server) = always_401_server() else { return };
@@ -352,13 +393,13 @@ fn rejected_token_terminates_with_auth_error() {
             .with_credential_helper(false);
         remote::fetch(&repo, Some("origin"), false, &ctx).unwrap_err()
     });
-    assert!(matches!(&err, GitYasError::Auth(m) if m.contains("token was rejected")), "{err:?}");
+    assert!(
+        matches!(&err, GitYasError::Auth(m) if m.contains("unencrypted http://") && m.contains("https://")),
+        "{err:?}"
+    );
     let requests = server.requests.lock().unwrap();
-    let with_auth = requests
-        .iter()
-        .filter(|r| r.to_ascii_lowercase().contains("authorization: basic"))
-        .count();
-    assert_eq!(with_auth, 1, "the token is offered exactly once: {requests:?}");
+    let with_auth = requests.iter().filter(|r| r.to_ascii_lowercase().contains("authorization")).count();
+    assert_eq!(with_auth, 0, "no credentials over plain http: {requests:?}");
     assert!(requests.len() <= 1 + remote::MAX_CREDENTIAL_ATTEMPTS as usize, "{requests:?}");
     assert!(
         !requests.iter().any(|r| r.contains("bad-token")),
@@ -407,4 +448,28 @@ fn rejected_token_on_push_and_clone_terminates() {
     });
     assert!(matches!(push_err, GitYasError::Auth(_)), "{push_err:?}");
     assert!(matches!(clone_err, GitYasError::Auth(_)), "{clone_err:?}");
+}
+
+/// Real HTTPS through gitoxide (TLS, smart HTTP v2): clone a small public repository, then fetch it again.
+/// Opt-in (network): `GITYAS_NET_TESTS=1 cargo test -p gityas-git --test remote -- --ignored real_https`.
+#[test]
+#[ignore = "network; set GITYAS_NET_TESTS=1"]
+fn real_https_clone_then_fetch() {
+    if std::env::var_os("GITYAS_NET_TESTS").is_none() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let creds = NoCredentials;
+    let events = std::cell::RefCell::new(Vec::new());
+    let report = |p: &gityas_git::remote::TransferProgress| events.borrow_mut().push(p.clone());
+    let ctx = RemoteContext::new(&creds).with_progress(&report);
+    let dest = tmp.path().join("hello");
+    let repo = gityas_git::repository::clone("https://github.com/octocat/Hello-World.git", &dest, &ctx).unwrap();
+    assert!(repo.head().unwrap().target().is_some());
+    assert!(dest.join("README").is_file(), "checked out");
+    assert!(repo.find_reference("refs/remotes/origin/master").is_ok());
+    assert!(!events.borrow().is_empty());
+    let summary = remote::fetch(&repo, Some("origin"), true, &ctx).unwrap();
+    assert_eq!(summary.fetched.len(), 1);
+    assert!(!summary.updated_any(), "nothing new right after cloning");
 }

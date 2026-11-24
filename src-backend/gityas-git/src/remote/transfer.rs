@@ -53,6 +53,13 @@ pub fn fetch_remote(repo: &Repository, name: &str, prune: bool, ctx: &RemoteCont
     let session = Session::new(ctx, &url, ConfigSource::Repo(repo.path().to_path_buf()))?;
     session.check_cancelled()?;
 
+    // gitoxide unless the transport's program (ssh, or git for local paths) is missing.
+    let repo_dir = repo.workdir().unwrap_or_else(|| repo.path());
+    let gix_repo = crate::gitoxide::open(repo_dir).ok();
+    if gix_repo.is_some() && super::gix_transfer::use_gitoxide(&url, gix_repo.as_ref()) {
+        return super::gix_transfer::fetch_remote(repo_dir, name, &url, prune, ctx, &session);
+    }
+
     let before = ref_snapshot(repo)?;
     let mut opts = git2::FetchOptions::new();
     opts.remote_callbacks(session.callbacks());

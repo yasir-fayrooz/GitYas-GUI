@@ -277,6 +277,27 @@ pub fn clone(url: &str, dest: &Path, ctx: &RemoteContext<'_>) -> Result<Reposito
     }
     let session = Session::new(ctx, url, ConfigSource::Default)?;
     session.check_cancelled()?;
+    if crate::remote::use_gitoxide(url, None) {
+        let existed = dest.is_dir();
+        if let Err(err) = crate::remote::clone_with_gitoxide(url, dest, ctx, &session) {
+            // gitoxide removes the destination of a failed clone, even an empty folder that was already there.
+            if existed
+                && !dest.exists()
+                && let Err(io) = std::fs::create_dir(dest)
+            {
+                tracing::warn!(path = %dest.display(), "cannot restore the empty destination folder: {io}");
+            }
+            return Err(err);
+        }
+        let repo = open(dest)?;
+        // Windows: let the git CLI handle tracked paths over MAX_PATH (gitoxide's checkout already does).
+        if cfg!(windows) {
+            repo.config()
+                .and_then(|mut config| config.set_bool("core.longpaths", true))
+                .map_err(git_error)?;
+        }
+        return Ok(repo);
+    }
     let mut fetch = git2::FetchOptions::new();
     fetch.remote_callbacks(session.callbacks());
     let mut builder = git2::build::RepoBuilder::new();

@@ -3,6 +3,7 @@
 
 use gityas_core::models::BranchKind;
 use gityas_core::{AppEvent, GitYasError, Result};
+use gityas_git::gitoxide::GixRepo;
 
 use crate::session::SessionCtx;
 use crate::{Engine, Inner, cache};
@@ -117,6 +118,18 @@ impl Refresh {
 /// Recomputes each requested part and emits its event. Parts are independent: one failing (e.g. an unreadable
 /// status entry) does not stop the others from being emitted. Returns the first error, after emitting the rest.
 pub(crate) fn refresh_blocking(inner: &Inner, ctx: &SessionCtx, repo: &git2::Repository, what: Refresh) -> Result<()> {
+    refresh_blocking_with(inner, ctx, repo, what, None)
+}
+
+/// [`refresh_blocking`] with the working-tree paths that changed, when they are known (the file watcher): the
+/// status is then patched instead of rescanned where that is safe (see [`crate::worktree_status`]).
+pub(crate) fn refresh_blocking_with(
+    inner: &Inner,
+    ctx: &SessionCtx,
+    repo: &git2::Repository,
+    what: Refresh,
+    changed_paths: Option<&[std::path::PathBuf]>,
+) -> Result<()> {
     let mut first_err: Option<GitYasError> = None;
     let mut part = |name: &str, result: Result<AppEvent>| match result {
         Ok(event) => inner.emit_scoped(ctx, event),
@@ -127,38 +140,65 @@ pub(crate) fn refresh_blocking(inner: &Inner, ctx: &SessionCtx, repo: &git2::Rep
     };
     let repo_id = || ctx.repo_id.clone();
 
+    // History, refs and HEAD read through one gitoxide handle (if opening it fails, each part retries on its own and
+    // reports the error).
+    let gix_handle = (what.commits || what.head || what.local_branches || what.remote_branches)
+        .then(|| repo.gix().ok())
+        .flatten();
+    let history_repo: &dyn GixRepo = match &gix_handle {
+        Some(handle) => &**handle,
+        None => repo,
+    };
+
     // A long history the engine has not loaded yet: its newest page first, the full history after the other parts,
     // so the graph, branches and working tree show while it loads.
-    let preview = what.commits.then(|| cache::preview_commits(inner, ctx, repo)).flatten();
+    let preview = what.commits.then(|| cache::preview_commits(inner, ctx, history_repo)).flatten();
     let full_history_last = preview.is_some();
     if let Some(commits) = preview {
         part("commits preview", Ok(AppEvent::CommitsUpdated { repo: repo_id(), commits }));
     }
-    let full_history = || cache::load_commits(inner, ctx, repo).map(|commits| AppEvent::CommitsUpdated { repo: repo_id(), commits });
+    let full_history =
+        || cache::load_commits(inner, ctx, history_repo).map(|commits| AppEvent::CommitsUpdated { repo: repo_id(), commits });
     if what.commits && !full_history_last {
         part("commits", full_history());
     }
     if what.head {
         part(
             "head",
-            gityas_git::commits::get_head(repo).map(|head| AppEvent::CommitsHeadUpdated {
+            gityas_git::commits::get_head(history_repo).map(|head| AppEvent::CommitsHeadUpdated {
                 repo: repo_id(),
                 head: Some(head),
             }),
         );
     }
+    // Both branch lists from one ref scan (this repository's warm scan cache: unchanged ref files are not re-read).
+    let branch_refs = (what.local_branches || what.remote_branches).then(|| match &gix_handle {
+        Some(handle) => cache::read_refs(inner, ctx, handle).map(|(snapshot, _)| snapshot),
+        None => repo
+            .gix()
+            .and_then(|handle| cache::read_refs(inner, ctx, &handle).map(|(snapshot, _)| snapshot)),
+    });
+    // Ahead/behind counted in the history already in memory (just loaded above, or from an earlier load).
+    let hot_history = (what.local_branches).then(|| cache::hot_history(inner, &ctx.repo_id)).flatten();
+    let list = |kind: BranchKind| -> Result<Vec<gityas_core::models::Branch>> {
+        match (&branch_refs, &gix_handle) {
+            (Some(Ok(snapshot)), Some(handle)) => {
+                gityas_git::branches::list_branches_from(handle, snapshot, Some(kind), hot_history.as_deref())
+            }
+            (Some(Err(err)), _) => Err(err.clone()),
+            _ => gityas_git::branches::list_branches(repo, Some(kind)),
+        }
+    };
     if what.local_branches {
         part(
             "local_branches",
-            gityas_git::branches::list_branches(repo, Some(BranchKind::Local))
-                .map(|branches| AppEvent::LocalBranchesUpdated { repo: repo_id(), branches }),
+            list(BranchKind::Local).map(|branches| AppEvent::LocalBranchesUpdated { repo: repo_id(), branches }),
         );
     }
     if what.remote_branches {
         part(
             "remote_branches",
-            gityas_git::branches::list_branches(repo, Some(BranchKind::Remote))
-                .map(|branches| AppEvent::RemoteBranchesUpdated { repo: repo_id(), branches }),
+            list(BranchKind::Remote).map(|branches| AppEvent::RemoteBranchesUpdated { repo: repo_id(), branches }),
         );
     }
     if what.remotes {
@@ -170,7 +210,7 @@ pub(crate) fn refresh_blocking(inner: &Inner, ctx: &SessionCtx, repo: &git2::Rep
     if what.files {
         part(
             "files",
-            gityas_git::status::get_status(repo).map(|files| AppEvent::GitFilesChanged { repo: repo_id(), files }),
+            crate::worktree_status::load(inner, ctx, repo, changed_paths).map(|files| AppEvent::GitFilesChanged { repo: repo_id(), files }),
         );
     }
     if what.stashes {

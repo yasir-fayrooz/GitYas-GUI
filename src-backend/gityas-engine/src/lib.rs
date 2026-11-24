@@ -27,6 +27,7 @@ mod settings;
 #[cfg(test)]
 mod testutil;
 mod watch;
+mod worktree_status;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -103,6 +104,8 @@ pub(crate) struct Inner {
     pub(crate) auth_lock: tokio::sync::Mutex<()>,
     /// In-process state of the commit-graph cache: hot entry, GC throttle, stats.
     pub(crate) commit_graph: cache::CommitGraphState,
+    /// The active session's last working-tree status, patched from watcher batches (`worktree_status`).
+    pub(crate) worktree_status: worktree_status::StatusCache,
     /// Serialises settings writes (`update_settings`, `modify_settings`, `update_commit_signature`) so a
     /// read-modify-write never loses a concurrent change. Taken only on the blocking pool.
     pub(crate) settings_lock: std::sync::Mutex<()>,
@@ -156,6 +159,7 @@ impl Engine {
                 sessions: Arc::default(),
                 auth_lock: tokio::sync::Mutex::new(()),
                 commit_graph: cache::CommitGraphState::default(),
+                worktree_status: worktree_status::StatusCache::default(),
                 settings_lock: std::sync::Mutex::new(()),
                 fetch_interval,
             }),

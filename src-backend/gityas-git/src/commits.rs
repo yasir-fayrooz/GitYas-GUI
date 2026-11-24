@@ -8,15 +8,16 @@
 //! * the DFS is iterative (the old recursive DFS could overflow the stack on long histories);
 //! * parents outside the list (shallow boundary, hidden commits) are ignored instead of `unwrap()`-panicking.
 
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use git2::{ErrorCode, Repository, RepositoryState};
-use gityas_core::models::{Commit, CommitSignature, Delta, Head, ResetMode};
+use gityas_core::models::{Commit, CommitSignature, Delta, Head, RefTip, ResetMode};
 use gityas_core::{GitYasError, Oid, Result};
 
 use crate::cache::ref_tips;
 use crate::convert::{oid_from_git, oid_to_git};
 use crate::git_error;
+use crate::gitoxide::{self, GixRepo};
 use crate::status::{delta_from_git, sort_deltas};
 
 /// Converts one commit into the listed/cached row. Author name/email and summary are decoded lossily for display
@@ -54,58 +55,50 @@ pub fn commit_row(commit: &git2::Commit<'_>) -> Result<Commit> {
 /// Full live walk of everything reachable from [`ref_tips`] (local branches, remote-tracking branches, tags peeled
 /// to commits, and `HEAD`, so a detached HEAD's commits are shown; stashes and notes are not part of the history),
 /// in display order. This is the oracle and fallback for the commit-graph cache.
-pub fn get_commits_live(repo: &Repository) -> Result<Vec<Commit>> {
-    let tips = ref_tips(repo)?;
-    let mut walk = repo.revwalk().map_err(git_error)?;
-    let mut pushed = HashSet::new();
-    for tip in &tips {
-        if pushed.insert(tip.oid.clone()) {
-            walk.push(oid_to_git(&tip.oid)?).map_err(git_error)?;
-        }
-    }
-    let mut commits = Vec::new();
-    for oid in walk {
-        let oid = oid.map_err(git_error)?;
-        let commit = repo.find_commit(oid).map_err(git_error)?;
-        commits.push(commit_row(&commit)?);
-    }
-    Ok(sort_commits(commits))
+///
+/// gitoxide: the walk reads parents from the commit-graph file when there is one, then the rows are decoded in
+/// parallel ([`crate::cache::reach_rows`]).
+pub fn get_commits_live<R: GixRepo + ?Sized>(repo: &R) -> Result<Vec<Commit>> {
+    let repo = repo.gix()?;
+    get_commits_live_from(&repo, &ref_tips(&*repo)?)
+}
+
+/// [`get_commits_live`] from tips already read (the engine reads refs once per refresh).
+pub fn get_commits_live_from(repo: &gix::Repository, tips: &[RefTip]) -> Result<Vec<Commit>> {
+    let tip_ids = tips.iter().map(|tip| gitoxide::oid_to_gix(&tip.oid)).collect::<Result<Vec<_>>>()?;
+    Ok(sort_commits(crate::cache::reach_rows(repo, &tip_ids, &[])?))
 }
 
 /// The newest `max` commits reachable from [`ref_tips`], in display order, or `None` when the history has no more
 /// than `max` commits (the full history is then no more work). A first page to show while the full history loads;
 /// with clock skew its order can differ slightly from [`get_commits_live`]'s.
 ///
-/// Walks newest-first by committer time with its own heap, reading only the commits it pops and their parents: any
-/// libgit2 revwalk sort walks the whole history before returning the first commit.
-pub fn get_commits_newest(repo: &Repository, max: usize) -> Result<Option<Vec<Commit>>> {
-    let mut queue: BinaryHeap<(i64, git2::Oid)> = BinaryHeap::new();
-    let mut seen: HashSet<git2::Oid> = HashSet::new();
-    // A parent missing from a shallow clone ends its line, as in the full walk.
-    let mut enqueue = |oid: git2::Oid, queue: &mut BinaryHeap<(i64, git2::Oid)>| -> Result<()> {
-        if !seen.insert(oid) {
-            return Ok(());
+/// gitoxide's commit-time ordering is incremental (a priority queue over the frontier, commit times from the
+/// commit-graph when present), so this reads about `max` commits, not the whole history.
+pub fn get_commits_newest<R: GixRepo + ?Sized>(repo: &R, max: usize) -> Result<Option<Vec<Commit>>> {
+    let repo = repo.gix()?;
+    get_commits_newest_from(&repo, &ref_tips(&*repo)?, max)
+}
+
+/// [`get_commits_newest`] from tips already read.
+pub fn get_commits_newest_from(repo: &gix::Repository, tips: &[RefTip], max: usize) -> Result<Option<Vec<Commit>>> {
+    let mut tip_ids = tips.iter().map(|tip| gitoxide::oid_to_gix(&tip.oid)).collect::<Result<Vec<_>>>()?;
+    tip_ids.sort_unstable();
+    tip_ids.dedup();
+    let walk = repo
+        .rev_walk(tip_ids)
+        .sorting(gix::revision::walk::Sorting::ByCommitTime(
+            gix::revision::walk::CommitTimeOrder::NewestFirst,
+        ))
+        .all()
+        .map_err(gitoxide::gix_error)?;
+    let mut ids = Vec::with_capacity(max);
+    for info in walk {
+        let info = info.map_err(gitoxide::gix_error)?;
+        if ids.len() == max {
+            return Ok(Some(sort_commits(gitoxide::decode_rows(repo, &ids)?)));
         }
-        match repo.find_commit(oid) {
-            Ok(commit) => queue.push((commit.time().seconds(), oid)),
-            Err(err) if err.code() == ErrorCode::NotFound => {}
-            Err(err) => return Err(git_error(err)),
-        }
-        Ok(())
-    };
-    for tip in ref_tips(repo)? {
-        enqueue(oid_to_git(&tip.oid)?, &mut queue)?;
-    }
-    let mut commits = Vec::with_capacity(max);
-    while let Some((_, oid)) = queue.pop() {
-        if commits.len() == max {
-            return Ok(Some(sort_commits(commits)));
-        }
-        let commit = repo.find_commit(oid).map_err(git_error)?;
-        for parent in commit.parent_ids() {
-            enqueue(parent, &mut queue)?;
-        }
-        commits.push(commit_row(&commit)?);
+        ids.push(info.id);
     }
     Ok(None)
 }
@@ -192,36 +185,34 @@ pub fn retain_reachable(commits: Vec<Commit>, tips: &[Oid]) -> Vec<Commit> {
 }
 
 /// Where HEAD points: a branch, a detached commit, or an unborn branch (fresh repository).
-pub fn get_head(repo: &Repository) -> Result<Head> {
-    match repo.head() {
-        Ok(head) => {
-            let target = head
-                .target()
-                .ok_or_else(|| GitYasError::Git("HEAD does not resolve to an object id".into()))?;
-            let target = oid_from_git(target)?;
-            if repo.head_detached().map_err(git_error)? {
-                return Ok(Head::Detached { target });
-            }
-            let refname = utf8_ref_name(head.name_bytes())?;
-            Ok(Head::Branch {
-                name: short_branch_name(&refname),
-                refname,
-                target,
-            })
-        }
-        Err(err) if err.code() == ErrorCode::UnbornBranch || err.code() == ErrorCode::NotFound => {
-            let head = repo.find_reference("HEAD").map_err(git_error)?;
-            let refname = head
-                .symbolic_target_bytes()
-                .ok_or_else(|| GitYasError::Git("HEAD is neither a branch nor a commit".into()))
-                .and_then(utf8_ref_name)?;
-            Ok(Head::Unborn {
-                name: short_branch_name(&refname),
-                refname,
-            })
-        }
-        Err(err) => Err(git_error(err)),
+pub fn get_head<R: GixRepo + ?Sized>(repo: &R) -> Result<Head> {
+    let repo = repo.gix()?;
+    let head = repo.head().map_err(gitoxide::gix_error)?;
+    let referent = || {
+        head.referent_name()
+            .ok_or_else(|| GitYasError::Git("HEAD is neither a branch nor a commit".into()))
+            .and_then(|name| utf8_ref_name(name.as_bstr()))
+    };
+    if head.is_unborn() {
+        let refname = referent()?;
+        return Ok(Head::Unborn {
+            name: short_branch_name(&refname),
+            refname,
+        });
     }
+    let target = head
+        .id()
+        .ok_or_else(|| GitYasError::Git("HEAD does not resolve to an object id".into()))
+        .and_then(|id| gitoxide::oid_from_gix(&id))?;
+    if head.is_detached() {
+        return Ok(Head::Detached { target });
+    }
+    let refname = referent()?;
+    Ok(Head::Branch {
+        name: short_branch_name(&refname),
+        refname,
+        target,
+    })
 }
 
 fn utf8_ref_name(bytes: &[u8]) -> Result<String> {
@@ -349,7 +340,13 @@ pub fn reword_commit(repo: &Repository, commit: &Oid, message: &str) -> Result<O
     }
     let target = repo.find_commit(oid_to_git(commit)?).map_err(git_error)?;
     let head = head_commit(repo)?.ok_or_else(|| GitYasError::InvalidInput("HEAD has no commits".into()))?;
-    if head.id() != target.id() && !repo.graph_descendant_of(head.id(), target.id()).map_err(git_error)? {
+    if head.id() != target.id()
+        && !gitoxide::is_ancestor(
+            &*repo.gix()?,
+            gitoxide::oid_from_git2(target.id())?,
+            gitoxide::oid_from_git2(head.id())?,
+        )?
+    {
         return Err(GitYasError::InvalidInput(
             "only commits on the checked-out branch (HEAD and its ancestors) can be edited".into(),
         ));

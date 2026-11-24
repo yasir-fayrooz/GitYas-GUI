@@ -22,6 +22,7 @@ use super::transfer::{configured_upstream, fetch_remote};
 use crate::branches::safe_checkout;
 use crate::convert::oid_from_git;
 use crate::git_error;
+use crate::gitoxide::{self, GixRepo};
 use crate::repository::{RepoState, ensure_clean_state, ensure_not_bare, fresh_index, git_signature, path_from_bytes, state};
 
 pub use gityas_core::models::{AbortMergeOutcome, MergeOutcome, PullOutcome};
@@ -148,7 +149,14 @@ pub fn merge_branch(repo: &Repository, source: &str, target: &str, signature: Op
         if !blocked.is_empty() || matches!(e.code(), ErrorCode::Conflict | ErrorCode::MergeConflict) {
             if blocked.is_empty() {
                 // Files the merge brings in = merge base -> source.
-                let base = repo.merge_base(target_oid, source_commit.id()).map_err(git_error)?;
+                let gix_repo = repo.gix()?;
+                let base = gitoxide::merge_base(
+                    &gix_repo,
+                    gitoxide::oid_from_git2(target_oid)?,
+                    gitoxide::oid_from_git2(source_commit.id())?,
+                )?
+                .ok_or_else(|| GitYasError::NotFound("the branches have no common ancestor".into()))
+                .and_then(|base| gitoxide::oid_to_git2(&base))?;
                 let base_tree = commit_tree(repo, base)?;
                 let source_tree = source_commit.tree().map_err(git_error)?;
                 blocked = crate::branches::blocking_paths(repo, Some(&base_tree), &source_tree)?;

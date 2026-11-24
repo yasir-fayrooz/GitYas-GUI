@@ -33,7 +33,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::Inner;
-use crate::refresh::{Refresh, refresh_blocking};
+use crate::refresh::{Refresh, refresh_blocking_with};
 use crate::session::SessionCtx;
 
 /// What kind of repository state a changed path affects.
@@ -129,6 +129,15 @@ impl Layout {
     /// `false` once the repository (its git dir or working tree) has been deleted or moved away.
     pub(crate) fn exists(&self) -> bool {
         self.gitdir.is_dir() && self.commondir.is_dir() && self.workdir.as_ref().is_none_or(|w| w.is_dir())
+    }
+
+    /// `path` relative to the working tree, when it is a working-tree file (not inside a git dir).
+    pub(crate) fn worktree_path(&self, path: &Path) -> Option<PathBuf> {
+        if path.starts_with(&self.gitdir) || path.starts_with(&self.commondir) {
+            return None;
+        }
+        let rel = path.strip_prefix(self.workdir.as_ref()?).ok()?;
+        (!rel.as_os_str().is_empty()).then(|| rel.to_path_buf())
     }
 
     /// The kind of state `path` affects, or `None` for noise.
@@ -302,7 +311,9 @@ impl Batch {
 /// Outcome of classifying a batch.
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
-    Refresh(Refresh),
+    /// What to refresh, and the working-tree paths that changed when they are all that changed for the status
+    /// (`None`: rescan it; see [`crate::worktree_status`]).
+    Refresh(Refresh, Option<Vec<PathBuf>>),
     /// The repository directory is gone: warn once and stop watching.
     Gone,
 }
@@ -313,7 +324,7 @@ fn judge(layout: &Layout, batch: &Batch, repo_path: &Path) -> Verdict {
     }
     if batch.errors > 0 {
         // Lost events (queue overflow, rescan) or a backend error: the state is unknown.
-        return Verdict::Refresh(Refresh::ALL);
+        return Verdict::Refresh(Refresh::ALL, None);
     }
     let mut ignore = IgnoreCheck::new(
         gityas_git::repository::open(repo_path)
@@ -321,18 +332,35 @@ fn judge(layout: &Layout, batch: &Batch, repo_path: &Path) -> Verdict {
             .ok(),
     );
     let mut what = Refresh::NONE;
+    // Working-tree paths behind `what.files`; `None` once something else changes the status (the index, ignore or
+    // attribute rules, submodule config) or there are too many to patch.
+    let mut changed: Option<Vec<PathBuf>> = Some(Vec::new());
     for path in &batch.paths {
-        if let Some(kind) = layout.classify(path, &mut ignore) {
-            what = what.union(refresh_for(path, kind));
-            if what == Refresh::ALL {
-                break;
+        let Some(kind) = layout.classify(path, &mut ignore) else { continue };
+        what = what.union(refresh_for(path, kind));
+        if kind != WatchKind::Files {
+            continue;
+        }
+        let rules = [".gitignore", ".gitattributes", ".gitmodules"];
+        match layout.worktree_path(path) {
+            Some(rel) if !rules.iter().any(|r| rel.file_name() == Some(OsStr::new(r))) => {
+                if let Some(paths) = changed.as_mut() {
+                    if !paths.contains(&rel) {
+                        paths.push(rel);
+                    }
+                    if paths.len() > crate::worktree_status::MAX_INCREMENTAL_PATHS {
+                        changed = None;
+                    }
+                }
             }
+            _ => changed = None,
         }
     }
     if layout.workdir.is_none() {
         what.files = false;
     }
-    Verdict::Refresh(what)
+    let changed = changed.filter(|paths| what.files && !paths.is_empty());
+    Verdict::Refresh(what, changed)
 }
 
 fn start_debouncer(layout: &Layout, debounce: Duration, backend: Backend, tx: mpsc::UnboundedSender<DebounceEventResult>) -> Result<Guard> {
@@ -438,8 +466,8 @@ async fn run(inner: Arc<Inner>, ctx: SessionCtx, backend: Backend) {
             let path = ctx.path.clone();
             inner.blocking(move || Ok(judge(&layout, &batch, &path))).await
         };
-        let what = match judged {
-            Ok(Verdict::Refresh(what)) => what,
+        let (what, changed) = match judged {
+            Ok(Verdict::Refresh(what, changed)) => (what, changed),
             Ok(Verdict::Gone) => {
                 tracing::warn!(repo = %ctx.repo_id, "repository directory disappeared; file watcher stopped");
                 inner.emit_scoped(
@@ -462,7 +490,9 @@ async fn run(inner: Arc<Inner>, ctx: SessionCtx, backend: Backend) {
         }
         tracing::trace!(repo = %ctx.repo_id, ?what, "watcher refresh");
         match inner
-            .with_session_repo(&ctx, move |inner, ctx, repo| refresh_blocking(inner, ctx, repo, what))
+            .with_session_repo(&ctx, move |inner, ctx, repo| {
+                refresh_blocking_with(inner, ctx, repo, what, changed.as_deref())
+            })
             .await
         {
             Ok(()) => {}
@@ -582,6 +612,42 @@ mod tests {
         assert_eq!(kind(&l, "/r.git/refs/heads/main"), Some(WatchKind::RefsHeads));
         assert_eq!(kind(&l, "/r.git/objects/pack/x.pack"), None);
         assert_eq!(kind(&l, "/elsewhere"), None);
+    }
+
+    /// Working-tree edits carry their paths (the status is patched); anything else that changes the status does not.
+    #[test]
+    fn batches_carry_changed_paths_only_when_the_status_can_be_patched() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let l = Layout::of(&repo).unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let verdict = |paths: &[&str]| {
+            let batch = Batch {
+                paths: paths.iter().map(|p| root.join(p)).collect(),
+                errors: 0,
+            };
+            judge(&l, &batch, dir.path())
+        };
+        let files = |paths: &[&str]| Some(paths.iter().map(PathBuf::from).collect::<Vec<_>>());
+        assert_eq!(
+            verdict(&["src/a.rs", "b.txt", "src/a.rs"]),
+            Verdict::Refresh(Refresh::FILES, files(&["src/a.rs", "b.txt"]))
+        );
+        assert_eq!(verdict(&["src/a.rs", ".git/index"]), Verdict::Refresh(Refresh::FILES, None));
+        assert_eq!(verdict(&["sub/.gitignore"]), Verdict::Refresh(Refresh::FILES, None));
+        assert_eq!(verdict(&[".git/HEAD"]), Verdict::Refresh(Refresh::HEAD, None));
+        let Verdict::Refresh(what, changed) = verdict(&["a.txt", ".git/HEAD"]) else {
+            panic!("refresh")
+        };
+        assert!(what.files && what.head);
+        assert_eq!(changed, files(&["a.txt"]), "HEAD alone does not change the working-tree status");
+        let many: Vec<String> = (0..=crate::worktree_status::MAX_INCREMENTAL_PATHS)
+            .map(|i| format!("f{i}"))
+            .collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        assert_eq!(verdict(&many), Verdict::Refresh(Refresh::FILES, None));
+        let lost = Batch { paths: vec![], errors: 1 };
+        assert_eq!(judge(&l, &lost, dir.path()), Verdict::Refresh(Refresh::ALL, None));
     }
 
     #[test]

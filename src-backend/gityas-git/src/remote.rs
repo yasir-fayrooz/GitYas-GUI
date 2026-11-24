@@ -9,11 +9,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gityas_core::{Credential, CredentialProvider, Provider};
 
 mod auth;
+mod gix_transfer;
 mod merge_flow;
 mod transfer;
 
 pub(crate) use auth::{ConfigSource, Session};
 pub use auth::{MAX_CREDENTIAL_ATTEMPTS, MAX_SSH_ATTEMPTS, default_username, detect_provider, is_ssh_url, redact_url_credentials};
+pub(crate) use gix_transfer::{clone as clone_with_gitoxide, use_gitoxide};
 pub use merge_flow::{AbortMergeOutcome, MergeOutcome, PullOutcome, abort_merge, merge_branch, pull, upstream_refname};
 pub(crate) use merge_flow::{conflict_paths as conflict_paths_of, overwrite_error as merge_flow_overwrite_error};
 pub(crate) use transfer::set_upstream_config as set_upstream;

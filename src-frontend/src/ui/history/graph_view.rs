@@ -134,7 +134,9 @@ struct RowCtx<'a> {
 pub(super) fn show(ui: &mut Ui, app: &mut GitYasApp) -> Vec<Intent> {
     let mut out = Vec::new();
     let p = theme::pal(ui);
-    // A pending tab switch shows "Opening <name>…" instead of the previous repository's history.
+    // A pending tab switch shows "Opening <name>…" instead of the previous repository's history, until the engine has
+    // switched to it (from then on its data, possibly restored from a recent visit, is shown while it refreshes).
+    let switching = crate::ui::repos::switch_pending(app);
     let opening = crate::ui::repos::opening_label(app);
     let GitYasApp { store, tabs, .. } = app;
     let (Some(repo), Some(active)) = (store.repo.as_ref(), store.active.clone()) else {
@@ -146,7 +148,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut GitYasApp) -> Vec<Intent> {
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(p.bg_graph))
         .show(ui, |ui| {
-            if opening.is_some() || !repo.is_ready() {
+            if switching || !repo.is_ready() {
                 let label = opening.as_deref().unwrap_or("Loading history…");
                 centered(ui, |ui| {
                     ui.horizontal(|ui| {

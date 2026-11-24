@@ -216,7 +216,8 @@ async fn cache_benchmark() {
     let known: std::collections::HashSet<&gityas_core::Oid> = live.iter().map(|c| &c.id).collect();
     let (_, known_set_time) = time(|| live.iter().map(|c| &c.id).collect::<std::collections::HashSet<_>>());
     let state = super::CommitGraphState::default();
-    let (_, walk_known_time) = time(|| super::walk_until_known(&state, &repo, &new_tips, &known).unwrap());
+    let gix_repo = gityas_git::gitoxide::open(&repo_path).unwrap();
+    let (_, walk_known_time) = time(|| super::walk_until_known(&state, &gix_repo, &new_tips, &known).unwrap());
     let fp = gityas_git::cache::fingerprint(&new_tips);
     let (_, inc_store_time) = time(|| storage.cache().store_refresh(&ctx.repo_id, &rows, &new_tips, &fp).unwrap());
     let (_, gc_time) = time(|| storage.cache().gc(&ctx.repo_id, 30 * 24 * 3600, 512 * 1024 * 1024).unwrap());
@@ -228,6 +229,25 @@ async fn cache_benchmark() {
     let (_, cold_sort_time) = time(|| gityas_git::commits::sort_commits(all_rows));
     storage.cache().purge_repository(&cold_id).unwrap();
     let cache_bytes = std::fs::metadata(storage.cache().path().unwrap()).map(|m| m.len()).unwrap_or(0);
+
+    // gitoxide specifics: opening a handle, and the same walks once a commit-graph file exists (written by
+    // `git gc` / `git commit-graph write`, as in most real clones).
+    let (_, open_time) = best(5, || gityas_git::gitoxide::open(&repo_path).unwrap());
+    let (_, head_time) = best(5, || gityas_git::commits::get_head(&gix_repo).unwrap());
+    let (_, refs_time) = best(5, || gityas_git::refs::list_references(&gix_repo).unwrap());
+    let (_, tags_time) = best(5, || gityas_git::refs::list_tags(&gix_repo).unwrap());
+    let (plain_live, plain_live_time) = best(3, || gityas_git::commits::get_commits_live(&gix_repo).unwrap());
+    let graph_written = std::process::Command::new("git")
+        .args(["commit-graph", "write", "--reachable"])
+        .current_dir(&repo_path)
+        .status()
+        .is_ok_and(|s| s.success());
+    let graph_repo = gityas_git::gitoxide::open(&repo_path).unwrap();
+    let (graph_live, graph_live_time) = best(3, || gityas_git::commits::get_commits_live(&graph_repo).unwrap());
+    // Same history through the commit-graph path (graph walk + parallel decode) as through the depth-first pass.
+    assert_eq!(graph_live, plain_live);
+    let (_, graph_page_time) = best(5, || gityas_git::commits::get_commits_newest(&graph_repo, page).unwrap());
+    let (_, graph_tips_time) = best(5, || gityas_git::cache::ref_tips(&graph_repo).unwrap());
 
     println!(
         "cache_benchmark: {n} commits, {} tips (generated in {}); best of 3-5 samples",
@@ -259,4 +279,95 @@ async fn cache_benchmark() {
     println!("    store_refresh                         {}", ms(inc_store_time));
     println!("    gc                                    {}", ms(gc_time));
     println!("  cache.db size                           {:>8.1} MB", cache_bytes as f64 / 1e6);
+    println!("  gitoxide");
+    println!("    open handle                           {}", ms(open_time));
+    println!("    live walk now (after +10 commits)     {}", ms(plain_live_time));
+    println!("    get_head                              {}", ms(head_time));
+    println!("    list_references                       {}", ms(refs_time));
+    println!("    list_tags                             {}", ms(tags_time));
+    println!("  with a commit-graph file (written: {graph_written})");
+    println!("    live walk (get_commits_live)          {}", ms(graph_live_time));
+    println!("    first page ({page} newest)              {}", ms(graph_page_time));
+    println!("    ref_tips                              {}", ms(graph_tips_time));
+}
+
+/// A repository switch on a real repository, part by part, as `refresh_blocking(Refresh::ALL)` runs it:
+///
+/// ```text
+/// GITYAS_BENCH_REPO=path/to/repo cargo test -p gityas-engine --release -- --ignored --nocapture switch_benchmark
+/// ```
+///
+/// Read-only on the repository (the cache database lives in a temporary directory).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "benchmark; set GITYAS_BENCH_REPO and run with --release --ignored --nocapture"]
+async fn switch_benchmark() {
+    use gityas_core::models::BranchKind;
+
+    let Some(repo_path) = std::env::var_os("GITYAS_BENCH_REPO").map(std::path::PathBuf::from) else {
+        eprintln!("GITYAS_BENCH_REPO is not set; skipping");
+        return;
+    };
+    let dir = TempDir::new().unwrap();
+    let paths = StoragePaths {
+        data_dir: dir.path().join("data"),
+        cache_dir: dir.path().join("cache"),
+    };
+    let (storage, _) = Storage::open(&paths).unwrap();
+    let repo_id = storage.user().insert_repository("bench", &repo_path, None).unwrap().id;
+    let git2_repo = gityas_git::repository::open(&repo_path).unwrap();
+
+    // First open ever: empty cache database (cold fill), first page shown before it.
+    let first = engine(&storage);
+    let ctx: SessionCtx = first.inner.sessions.new_ctx(repo_id.clone(), repo_path.clone(), None);
+    let (preview, preview_time) = time(|| super::preview_commits(&first.inner, &ctx, &git2_repo));
+    let ((cold, src), cold_time) = time(|| {
+        let wrapper = load_commits(&first.inner, &ctx, &git2_repo).unwrap();
+        (
+            wrapper.commits.len(),
+            super::lock(&first.inner.commit_graph.hot).first().map(|_| ()),
+        )
+    });
+    let _ = src;
+    // Switching back to it within the same session (hot entry, warm ref scan).
+    let (_, hot_time) = best(5, || load_commits(&first.inner, &ctx, &git2_repo).unwrap());
+    let (_, refs_warm_time) = best(5, || {
+        super::read_refs(&first.inner, &ctx, &gityas_git::gitoxide::open(&repo_path).unwrap()).unwrap()
+    });
+    // App restart: new engine, SQLite hit, no hot entry, cold ref scan.
+    let (_, warm_time) = best(3, || load_commits(&engine(&storage).inner, &ctx, &git2_repo).unwrap());
+    let (_, refs_cold_time) = best(3, || {
+        gityas_git::refscan::scan_refs(&gityas_git::gitoxide::open(&repo_path).unwrap(), &mut Default::default()).unwrap()
+    });
+    let (_, local_time) = best(3, || {
+        gityas_git::branches::list_branches(&git2_repo, Some(BranchKind::Local)).unwrap()
+    });
+    let (remote, remote_time) = best(3, || {
+        gityas_git::branches::list_branches(&git2_repo, Some(BranchKind::Remote)).unwrap()
+    });
+    let (_, status_time) = best(3, || gityas_git::status::get_status(&git2_repo).unwrap());
+    let (_, stashes_time) = best(3, || gityas_git::stash::list_stashes(&git2_repo).unwrap());
+    let (_, head_time) = best(3, || gityas_git::commits::get_head(&git2_repo).unwrap());
+    let (_, all_hot_time) = best(3, || {
+        crate::refresh::refresh_blocking(&first.inner, &ctx, &git2_repo, crate::refresh::Refresh::ALL).unwrap()
+    });
+
+    println!("switch_benchmark: {} — {cold} commits", repo_path.display());
+    println!("  first open ever");
+    println!(
+        "    first page shown                      {} ({} commits)",
+        ms(preview_time),
+        preview.as_ref().map_or(0, |p| p.commits.len())
+    );
+    println!("    full history (cold fill)              {}", ms(cold_time));
+    println!("  app restart (SQLite hit)                {}", ms(warm_time));
+    println!("  switch back (hot)                       {}", ms(hot_time));
+    println!("    refs, warm scan                       {}", ms(refs_warm_time));
+    println!("    refs, cold scan                       {}", ms(refs_cold_time));
+    println!("  other refresh parts (libgit2)");
+    println!("    local branches                        {}", ms(local_time));
+    println!("    remote branches ({:>5})               {}", remote.len(), ms(remote_time));
+    println!("    status                                {}", ms(status_time));
+    println!("    stashes                               {}", ms(stashes_time));
+    println!("    head                                  {}", ms(head_time));
+    println!("  whole refresh, switch back (hot)        {}", ms(all_hot_time));
 }

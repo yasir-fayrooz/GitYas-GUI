@@ -36,7 +36,7 @@ const DEFAULT_SSH_KEYS: [&str; 3] = ["id_ed25519", "id_ecdsa", "id_rsa"];
 /// Username for SSH remotes whose URL has none (`ssh://host/repo`).
 const SSH_DEFAULT_USER: &str = "git";
 
-const SSH_HOST_UNTRUSTED: &str = "the remote's SSH host key isn't trusted: it is missing from ~/.ssh/known_hosts or has \
+pub(crate) const SSH_HOST_UNTRUSTED: &str = "the remote's SSH host key isn't trusted: it is missing from ~/.ssh/known_hosts or has \
      changed. Connect once with ssh from a terminal to check and accept it, or use the HTTPS URL";
 
 /// Replaces the user-info part (`user:token@`) of every `scheme://` URL in `text` with `***@`, so a remote URL with
@@ -478,6 +478,11 @@ impl<'a> Session<'a> {
             config,
             log: Rc::new(RefCell::new(SessionLog::default())),
         })
+    }
+
+    /// A fresh credential decision state for one operation (the gitoxide path drives it per attempt).
+    pub(crate) fn credential_state(&self) -> CredentialState {
+        self.template.clone()
     }
 
     pub(crate) fn check_cancelled(&self) -> Result<()> {

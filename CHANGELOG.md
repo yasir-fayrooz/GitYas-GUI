@@ -14,13 +14,17 @@ How to write it:
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-11-25
+## [1.1.0] - 2026-11-25
 
 ### Added
 
 - **Worktrees** in the branches sidebar: see every worktree of the repository and the branch each one is on, add
   one on a new or existing branch (also from a branch's **Check out in new worktree…**), open it in a tab, and
   remove or prune it. Worktrees added or removed from the command line appear on their own.
+
+### Changed
+
+- Introduced Gitoxide for native Rust git bindings and vastly improved performance of loading and switching repositories.
 
 ## [1.0.0] - 2026-11-23
 
