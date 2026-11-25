@@ -94,18 +94,25 @@ impl Default for ChangelogUi {
 struct View {
     /// Opened after an update from this version: releases newer than it are marked new and shown first.
     since: Option<Version>,
+    /// The running version: newer sections (a changelog edited ahead of the release) are not marked new.
+    current: Version,
     show_all: bool,
 }
 
 /// Opens the dialog: all releases, or (`since`) what changed after that version.
 pub fn open(app: &mut GitYasApp, since: Option<Version>) {
+    open_at(app, since, updater::current_version());
+}
+
+fn open_at(app: &mut GitYasApp, since: Option<Version>, current: Version) {
     app.changelog_ui.open = Some(View {
         show_all: since.is_none(),
         since,
+        current,
     });
 }
 
-/// After the engine started (settings loaded): shows the notes once when this version is newer than the last one
+/// After the engine started (settings loaded): shows the notes once when this version differs from the last one
 /// whose notes were shown, then remembers this version. A fresh install only remembers it.
 pub fn after_start(app: &mut GitYasApp) {
     remember_version(app, updater::current_version());
@@ -113,13 +120,26 @@ pub fn after_start(app: &mut GitYasApp) {
 
 fn remember_version(app: &mut GitYasApp, current: Version) {
     let seen = app.store.settings.last_seen_version.as_deref().and_then(|v| Version::parse(v).ok());
-    if seen.as_ref().is_some_and(|seen| *seen >= current) {
+    if seen.as_ref() == Some(&current) {
         return;
     }
-    if let Some(seen) = seen
-        && parse(app.changelog_ui.source).iter().any(|r| r.version > seen)
-    {
-        open(app, Some(seen));
+    if let Some(seen) = seen {
+        let releases = parse(app.changelog_ui.source);
+        // The remembered version is newer than this one when the version line was reset (1.3.0 → 1.0.0 for the
+        // open-source release): nothing in this changelog compares to it, so the current release's notes are new.
+        let since = if seen < current {
+            seen
+        } else {
+            releases
+                .iter()
+                .map(|r| &r.version)
+                .find(|v| **v < current)
+                .cloned()
+                .unwrap_or_else(|| Version::new(0, 0, 0))
+        };
+        if releases.iter().any(|r| r.version > since && r.version <= current) {
+            open_at(app, Some(since), current.clone());
+        }
     }
     let version = current.to_string();
     app.store.settings.last_seen_version = Some(version.clone());
@@ -145,7 +165,11 @@ pub fn show_dialog(ctx: &egui::Context, app: &mut GitYasApp) {
     let releases = parse(app.changelog_ui.source);
     let mut close = false;
     let outcome = dialogs::modal(ctx, "changelog", title, 560.0, |ui| {
-        let is_new = |r: &Release| view.since.as_ref().is_some_and(|since| r.version > *since);
+        let is_new = |r: &Release| {
+            view.since
+                .as_ref()
+                .is_some_and(|since| r.version > *since && r.version <= view.current)
+        };
         let shown: Vec<&Release> = releases.iter().filter(|r| view.show_all || is_new(r)).collect();
         let max_height = (ctx.content_rect().height() * 0.65).max(200.0);
         egui::ScrollArea::vertical()
@@ -269,11 +293,26 @@ mod tests {
     }
 
     #[test]
+    fn notes_open_after_an_update_when_the_version_line_was_reset() {
+        let mut t = TestApp::mock();
+        t.app().changelog_ui.source = SAMPLE;
+        t.app().store.settings.last_seen_version = Some("2.0.0".into());
+        remember_version(t.app(), Version::new(1, 9, 1));
+        assert_eq!(t.app().store.settings.last_seen_version.as_deref(), Some("1.9.1"));
+        t.harness.step();
+        t.harness.step();
+        t.harness.get_by_label("What's new in GitYas");
+        t.harness.get_by_label("v1.9.1");
+        assert!(t.harness.query_by_label("v1.2.0").is_none(), "older than this release");
+        assert!(t.harness.query_by_label("v1.10.0").is_none(), "not released yet");
+    }
+
+    #[test]
     #[ignore = "needs a GPU"]
     fn snapshot_whats_new() {
         let mut t = TestApp::mock_gpu();
         t.app().changelog_ui.source = SNAPSHOT_SAMPLE;
-        open(t.app(), Some(Version::new(1, 1, 0)));
+        open_at(t.app(), Some(Version::new(1, 1, 0)), Version::new(1, 2, 0));
         t.harness.step();
         t.harness.step();
         t.snapshot("whats_new");

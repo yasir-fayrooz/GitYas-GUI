@@ -18,6 +18,8 @@ pub struct AddDialog {
     pub(super) tab: AddTab,
     pub(super) local: LocalForm,
     pub(super) clone: CloneForm,
+    /// A folder chosen in a picker this frame, to remember as the next pickers' start ([`remember_folder`]).
+    pub(super) picked: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -49,9 +51,17 @@ pub(super) struct CloneForm {
 
 impl Default for CloneForm {
     fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl CloneForm {
+    /// Clones into `last_folder` (the folder last chosen in a picker) when it still exists, else the home folder.
+    fn new(last_folder: Option<PathBuf>) -> Self {
+        let into = last_folder.filter(|p| p.is_dir()).or_else(logic::home_dir);
         Self {
             url: String::new(),
-            into: logic::home_dir().map(|h| h.display().to_string()).unwrap_or_default(),
+            into: into.map(|p| p.display().to_string()).unwrap_or_default(),
             name: String::new(),
             provider: None,
             cloning: false,
@@ -62,11 +72,13 @@ impl Default for CloneForm {
 }
 
 impl AddDialog {
-    pub fn new(tab: AddTab) -> Self {
+    /// `last_folder`: where the folder pickers start and the clone goes by default (`Settings::last_folder`).
+    pub fn new(tab: AddTab, last_folder: Option<PathBuf>) -> Self {
         Self {
             tab,
             local: LocalForm::default(),
-            clone: CloneForm::default(),
+            clone: CloneForm::new(last_folder),
+            picked: None,
         }
     }
 
@@ -84,6 +96,8 @@ struct View<'a> {
     progress: Option<RemoteProgress>,
     connected: Vec<(Provider, bool)>,
     adding: bool,
+    /// Where a picker starts when its field holds no existing folder.
+    last_folder: Option<PathBuf>,
 }
 
 impl View<'_> {
@@ -123,8 +137,12 @@ pub fn show(ctx: &egui::Context, app: &mut GitYasApp) {
             .map(|(_, p)| p.clone()),
         connected: app.store.auth.clone(),
         adding: app.bridge.is_running(TASK_ADD),
+        last_folder: last_folder(app),
     };
     let modal = dialogs::modal(ctx, "add_repository", "Add repository", 480.0, |ui| dialog.ui(ui, &view));
+    if let Some(folder) = dialog.picked.take() {
+        remember_folder(app, folder);
+    }
     let mut outcome = modal.inner;
     if modal.closed && outcome.is_none() {
         // Esc / ✕ / backdrop: ignored while cloning (the clone has its own Cancel).
@@ -154,6 +172,29 @@ pub fn show(ctx: &egui::Context, app: &mut GitYasApp) {
         None => {}
     }
     app.repos_ui.add = Some(dialog);
+}
+
+/// `Settings::last_folder` as a path.
+pub(super) fn last_folder(app: &GitYasApp) -> Option<PathBuf> {
+    app.store.settings.last_folder.as_deref().map(PathBuf::from)
+}
+
+/// Remembers `folder` as where the next folder picker starts (and the default clone destination).
+fn remember_folder(app: &mut GitYasApp, folder: PathBuf) {
+    let folder = folder.display().to_string();
+    if app.store.settings.last_folder.as_deref() == Some(folder.as_str()) {
+        return;
+    }
+    app.store.settings.last_folder = Some(folder.clone());
+    app.modify_settings(
+        "repos.last_folder",
+        move |settings| settings.last_folder = Some(folder),
+        |_, result| {
+            if let Err(err) = result {
+                tracing::warn!("cannot remember the last chosen folder: {err}");
+            }
+        },
+    );
 }
 
 fn add_local(app: &mut GitYasApp, path: PathBuf, provider: Option<Provider>) {
@@ -246,8 +287,12 @@ impl AddDialog {
                     form.error = None;
                 }
                 if ui.add_enabled(!view.adding, egui::Button::new("Choose…")).clicked() {
-                    let start = Some(logic::expand_home(&form.folder)).filter(|p| p.is_dir());
+                    let start = Some(logic::expand_home(&form.folder))
+                        .filter(|p| p.is_dir())
+                        .or_else(|| view.last_folder.clone());
                     if let Some(path) = platform_ui::pick_folder("Choose a repository folder", start.as_deref()) {
+                        // The folder holding the repository, so the next pick starts among its siblings.
+                        self.picked = Some(path.parent().map_or_else(|| path.clone(), PathBuf::from));
                         form.folder = path.display().to_string();
                         form.touched = true;
                         form.field_error = None;
@@ -349,8 +394,11 @@ impl AddDialog {
                     form.error = None;
                 }
                 if ui.add_enabled(!busy, egui::Button::new("Choose…")).clicked() {
-                    let start = Some(logic::expand_home(&form.into)).filter(|p| p.is_dir());
+                    let start = Some(logic::expand_home(&form.into))
+                        .filter(|p| p.is_dir())
+                        .or_else(|| view.last_folder.clone());
                     if let Some(path) = platform_ui::pick_folder("Choose where to clone", start.as_deref()) {
+                        self.picked = Some(path.clone());
                         form.into = path.display().to_string();
                         form.error = None;
                     }

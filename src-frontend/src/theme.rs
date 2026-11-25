@@ -34,6 +34,10 @@ pub struct Palette {
     /// Background tint for added / removed lines (diff, merge editor): 18 % (dark) / 12 % (light) of GREEN / RED.
     pub add_bg: Color32,
     pub del_bg: Color32,
+    /// Intra-line (word) changes over `add_bg` / `del_bg`. Dark mode keeps them softer so dim syntax colours
+    /// (comments) stay readable on them.
+    pub add_hl: Color32,
+    pub del_hl: Color32,
     /// Banner background (merge in progress, warnings).
     pub banner_bg: Color32,
     lanes: [Color32; 10],
@@ -55,7 +59,7 @@ impl Palette {
             Highlight::Attribute | Highlight::Emphasis | Highlight::Label | Highlight::Tag => (0x74ade8, 0x5c78e2),
             Highlight::Boolean | Highlight::Number | Highlight::EmphasisStrong | Highlight::VariableSpecial => (0xbf956a, 0xad6e25),
             Highlight::StringRegex | Highlight::StringSpecial => (0xbf956a, 0xad6e26),
-            Highlight::Comment => (0x5d636f, 0xa2a3a7),
+            Highlight::Comment => (0x7d8592, 0xa2a3a7),
             Highlight::CommentDoc | Highlight::StringEscape => (0x878e98, 0x7c7e86),
             Highlight::Constant => (0xdfc184, 0xc18401),
             Highlight::Constructor => (0x73ade9, 0x5c78e2),
@@ -142,6 +146,8 @@ pub const DARK: Palette = Palette {
     violet: rgb(0xb794f4),
     add_bg: tint(rgb(0x4cc36d), 46),
     del_bg: tint(rgb(0xe5605e), 46),
+    add_hl: tint(rgb(0x4cc36d), 72),
+    del_hl: tint(rgb(0xe5605e), 72),
     banner_bg: tint(rgb(0xeba43e), 40),
     lanes: LANES_DARK,
 };
@@ -171,6 +177,8 @@ pub const LIGHT: Palette = Palette {
     violet: rgb(0x7a4fb8),
     add_bg: tint(rgb(0x2f9e4f), 31),
     del_bg: tint(rgb(0xc93c3c), 31),
+    add_hl: tint(rgb(0x2f9e4f), 68),
+    del_hl: tint(rgb(0xc93c3c), 68),
     banner_bg: tint(rgb(0xc77d14), 36),
     lanes: LANES_LIGHT,
 };

@@ -207,6 +207,8 @@ pub struct Settings {
     /// Background fetch of the active repository, every this many seconds (see [`Settings::fetch_interval`]).
     pub fetch_interval_secs: u64,
     pub speed: SpeedSettings,
+    /// The folder the add-repository dialog's folder pickers last chose (`None` = start at the home folder).
+    pub last_folder: Option<String>,
 }
 
 impl Default for Settings {
@@ -220,6 +222,7 @@ impl Default for Settings {
             rail_position: RailPosition::default(),
             fetch_interval_secs: DEFAULT_FETCH_INTERVAL_SECS,
             speed: SpeedSettings::default(),
+            last_folder: None,
         }
     }
 }
@@ -303,6 +306,7 @@ mod tests {
                 summon: "Ctrl+Alt+Up".into(),
                 ..SpeedSettings::default()
             },
+            last_folder: Some("/home/ada/src".into()),
         });
         for position in RailPosition::ALL {
             round_trip(&position);

@@ -1459,8 +1459,8 @@ impl RowCtx<'_> {
             kind => {
                 let copyable = kind != RowKind::NoNewline;
                 let (bg, sign_color, hl) = match kind {
-                    RowKind::Add => (p.add_bg, p.green, p.add_bg.gamma_multiply(2.2)),
-                    RowKind::Del => (p.del_bg, p.red, p.del_bg.gamma_multiply(2.2)),
+                    RowKind::Add => (p.add_bg, p.green, p.add_hl),
+                    RowKind::Del => (p.del_bg, p.red, p.del_hl),
                     _ => (Color32::TRANSPARENT, p.text_muted, Color32::TRANSPARENT),
                 };
                 let text = diff_model::text(self.diff, &row.text);
@@ -1534,8 +1534,8 @@ impl RowCtx<'_> {
             let copyable = cell_kind(cell.kind).is_some();
             let text = diff_model::text(self.diff, &cell.text);
             let (bg, sign, sign_color, hl) = match cell.kind {
-                CellKind::Add => (p.add_bg, "+", p.green, p.add_bg.gamma_multiply(2.2)),
-                CellKind::Del => (p.del_bg, "−", p.red, p.del_bg.gamma_multiply(2.2)),
+                CellKind::Add => (p.add_bg, "+", p.green, p.add_hl),
+                CellKind::Del => (p.del_bg, "−", p.red, p.del_hl),
                 CellKind::Filler => (p.bg_graph_alt, "", p.text_faint, Color32::TRANSPARENT),
                 _ => (Color32::TRANSPARENT, "", p.text_faint, Color32::TRANSPARENT),
             };

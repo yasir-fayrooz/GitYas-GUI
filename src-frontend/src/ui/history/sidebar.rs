@@ -202,16 +202,26 @@ fn row(ui: &mut Ui, p: &Palette, spec: RowSpec<'_>) -> egui::Response {
         spec.glyph_color,
     );
 
-    // Trailing items, right to left.
+    // Trailing items, right to left. They get the width the name leaves free, but at least TRAILING_SHARE of the
+    // row: a long one (a worktree's branch) ends in an ellipsis instead of running over the name.
+    const TRAILING_SHARE: f32 = 0.45;
+    const GAP: f32 = 6.0;
     let mut right = rect.right() - 10.0;
+    let text_left = x + 20.0;
+    let available = (right - text_left - 4.0).max(0.0);
+    let name_width = ui
+        .painter()
+        .layout_no_wrap(spec.text.to_owned(), FontId::proportional(13.0), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    let mut budget = (available - name_width - GAP).max(available * TRAILING_SHARE);
     for (i, t) in spec.trailing.iter().enumerate().rev() {
-        let r = ui.painter().text(
-            egui::pos2(right, y),
-            Align2::RIGHT_CENTER,
-            &t.text,
-            FontId::proportional(11.0),
-            t.color,
-        );
+        let mut job = egui::text::LayoutJob::simple_singleline(t.text.clone(), FontId::proportional(11.0), t.color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(budget.max(0.0));
+        let galley = ui.painter().layout_job(job);
+        let r = Align2::RIGHT_CENTER.anchor_size(egui::pos2(right, y), galley.size());
+        budget -= galley.size().x + GAP;
+        ui.painter().galley(r.min, galley, t.color);
         if let Some(tip) = &t.tooltip {
             ui.interact(r, resp.id.with(("trailing", i)), Sense::hover()).on_hover_text(tip);
         }

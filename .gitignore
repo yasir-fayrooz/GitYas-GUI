@@ -12,6 +12,10 @@ logs
 
 # Rust workspace
 /target
+# Zig's build cache (cargo-zigbuild; CI's setup-zig restores it into the checkout, where it would make
+# scripts/release/release.sh refuse to build with "uncommitted changes")
+.zig-cache/
+zig-cache/
 # Release builds (scripts/release/release.sh) and their local configuration with key paths and passwords
 /dist
 /scripts/release/release.env

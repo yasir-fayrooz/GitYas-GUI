@@ -578,3 +578,20 @@ fn snapshot_overflowing_tabs() {
     }
     t.snapshot("tab_overflow");
 }
+
+#[test]
+fn a_chosen_folder_is_remembered_for_the_next_dialog() {
+    let mut t = TestApp::engine();
+    let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+    super::open_add_dialog(t.app(), AddTab::Clone);
+    add_dialog(&mut t).picked = Some(dir.path().to_path_buf());
+    t.harness.step();
+    t.settle_until("last folder saved", |app| !app.bridge.is_running("repos.last_folder"));
+    let engine = t.app().bridge.engine().clone();
+    let saved = t.block_on(engine.settings()).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(saved.last_folder.as_deref(), Some(dir.path().display().to_string().as_str()));
+
+    t.app().repos_ui.add = None;
+    super::open_add_dialog(t.app(), AddTab::Clone);
+    assert_eq!(add_dialog(&mut t).clone.into, dir.path().display().to_string());
+}

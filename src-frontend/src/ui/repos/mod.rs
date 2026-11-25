@@ -115,7 +115,7 @@ pub fn open_add_dialog(app: &mut GitYasApp, tab: AddTab) {
     match app.repos_ui.add.as_mut() {
         // Don't throw away a running clone or typed input; just switch tabs (unless cloning).
         Some(dialog) => dialog.select_tab(tab),
-        None => app.repos_ui.add = Some(add_dialog::AddDialog::new(tab)),
+        None => app.repos_ui.add = Some(add_dialog::AddDialog::new(tab, add_dialog::last_folder(app))),
     }
 }
 
