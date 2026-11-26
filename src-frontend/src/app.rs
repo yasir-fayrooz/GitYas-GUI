@@ -476,6 +476,8 @@ impl GitYasApp {
             ui::shortcuts(ui.ctx(), self);
         }
 
+        let details = ui::side::details_guard(ui.ctx(), self, modal_open);
+        let mut center = egui::Rect::NOTHING;
         ui::repos::tab_bar(ui, self);
         if self.store.started && self.store.fatal.is_none() {
             ui::context_bar::show(ui, self);
@@ -490,6 +492,7 @@ impl GitYasApp {
             self.layout.follow_center(in_merge);
             ui::settings::sync(ui.ctx(), self);
             ui::side::panels(ui, self);
+            center = ui.available_rect_before_wrap();
             if self.store.repo.is_none() {
                 ui::repos::welcome(ui, self);
             } else {
@@ -505,6 +508,7 @@ impl GitYasApp {
         ui::show_dialogs(&ctx, self);
         dialogs::show_confirm(&ctx, self);
         crate::notify::show_toasts(ui, self);
+        ui::side::dismiss_details(&ctx, self, details, center);
         ui::pointer_cursor(&ctx);
     }
 }

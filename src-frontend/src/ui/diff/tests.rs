@@ -214,6 +214,32 @@ fn file_leaving_the_list_shows_the_empty_state() {
 }
 
 #[test]
+fn committing_the_shown_file_closes_the_viewer() {
+    for staged in [true, false] {
+        let mut t = TestApp::engine();
+        let (_dir, repo, _, _) = two_hunk_repo(&mut t);
+        let mut request = unstaged("f.txt", DeltaChange::Modified);
+        if staged {
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("f.txt")).unwrap();
+            index.write().unwrap();
+            refresh(&mut t);
+            t.settle_until("staged", |app| {
+                app.store
+                    .repo
+                    .as_ref()
+                    .is_some_and(|r| r.files.find_staged(Path::new("f.txt")).is_some())
+            });
+            request.target = DiffTarget::WorkingTree { staged: true };
+        }
+        open_and_load(&mut t, request);
+        commit_all(&repo, "commit f.txt");
+        refresh(&mut t);
+        t.settle_until("viewer closed", |app| app.tab().is_some_and(|tab| tab.center == Center::Graph));
+    }
+}
+
+#[test]
 fn staging_the_last_file_closes_the_viewer() {
     let mut t = TestApp::engine();
     let (_dir, _repo, _, _) = two_hunk_repo(&mut t);

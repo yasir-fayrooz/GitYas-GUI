@@ -448,7 +448,11 @@ fn body(ui: &mut Ui, ctx: &RowCtx<'_>, tab: &mut crate::app::TabState, wip_summa
             } else if let Some(commit) = commits.get(index - wip_rows) {
                 let graph_row = repo.graph.rows.get(index - wip_rows);
                 let selected = tab.selection == Selection::Commit(commit.id.clone());
-                if commit_row(ui, ctx, commit, graph_row, selected, out).clicked() {
+                let resp = commit_row(ui, ctx, commit, graph_row, selected, out);
+                if resp.contains_pointer() {
+                    crate::ui::side::mark_commit_row(ui.ctx());
+                }
+                if resp.clicked() {
                     out.push(Intent::Select(Selection::Commit(commit.id.clone())));
                 }
             } else {

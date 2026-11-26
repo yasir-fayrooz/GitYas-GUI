@@ -88,9 +88,10 @@ pub fn dashed(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32)
     }
 }
 
-/// Paints one row: `[spine (spine_w)][line numbers (gutter_w)][text]` inside `rect` (text clipped to the row), the
-/// text in its syntax `colors` (see [`line_job`]). `number` is drawn plainly; chunk lines leave it `None` and draw
-/// a [`line_pick`] instead. The background and rules start after the spine.
+/// Paints one row: `[spine (spine_w)][line numbers (gutter_w)][text]` inside `rect` (the visible part of the row;
+/// text clipped to it), the text in its syntax `colors` (see [`line_job`]) and scrolled `scroll_x` to the left.
+/// `number` is drawn plainly; chunk lines leave it `None` and draw a [`line_pick`] instead. The background and rules
+/// start after the spine.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_row(
     ui: &Ui,
@@ -102,6 +103,7 @@ pub fn paint_row(
     text: &str,
     colors: &[(Range<usize>, Color32)],
     style: RowStyle,
+    scroll_x: f32,
 ) {
     let painter = ui.painter_at(rect);
     let band_left = rect.left() + spine_w;
@@ -135,9 +137,28 @@ pub fn paint_row(
             p.text_faint,
         );
     }
-    let galley = painter.layout_job(line_job(text, colors, p.text));
-    let pos = Pos2::new(band_left + gutter_w + TEXT_PAD, rect.center().y - galley.size().y / 2.0);
-    painter.galley(pos, galley, p.text);
+    // The text scrolls sideways under a fixed spine and gutter: shift it left by `scroll_x` and clip it to the
+    // right of the line numbers.
+    let text_left = band_left + gutter_w;
+    let text_painter =
+        painter.with_clip_rect(Rect::from_min_max(Pos2::new(text_left, rect.top()), rect.max).intersect(painter.clip_rect()));
+    let galley = text_painter.layout_job(line_job(text, colors, p.text));
+    let pos = Pos2::new(text_left + TEXT_PAD - scroll_x, rect.center().y - galley.size().y / 2.0);
+    text_painter.galley(pos, galley, p.text);
+}
+
+/// Width of a row whose text is `cols` monospace columns wide (spine, gutter and padding included).
+pub fn row_width(ui: &Ui, spine_w: f32, gutter_w: f32, cols: usize) -> f32 {
+    let glyph = ui.ctx().fonts_mut(|f| f.glyph_width(&mono(), '0'));
+    spine_w + gutter_w + 2.0 * TEXT_PAD + glyph * cols as f32
+}
+
+/// Widest line of `text` in columns, tabs expanded as [`line_job`] does.
+pub fn max_columns(text: &str) -> usize {
+    text.lines()
+        .map(|l| l.chars().map(|c| if c == '\t' { TAB.len() } else { 1 }).sum::<usize>())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Where a row sits in its chunk's spine (the bar is rounded at its ends).

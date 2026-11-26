@@ -37,9 +37,18 @@ struct PaneScroll {
     row_h: f32,
 }
 
-/// Where a revealed chunk sits in a pane (fraction of the viewport height from the top). Scroll-sync anchors
-/// use the same position, so panes revealed together stay in step when the user scrolls on from there.
-const ANCHOR_FRACTION: f32 = 1.0 / 3.0;
+/// Where a revealed chunk's first line sits in a pane (fraction of the viewport height from the top): centred.
+/// Scroll-sync anchors use the same position, so panes revealed together stay in step when the user scrolls on
+/// from there.
+const ANCHOR_FRACTION: f32 = 0.5;
+
+impl PaneScroll {
+    /// The offset that puts row `row` (its middle) at [`ANCHOR_FRACTION`] of the viewport; may be out of range.
+    fn anchor_for(&self, row: usize) -> f32 {
+        let row_h = if self.row_h > 0.0 { self.row_h } else { ROW_H };
+        (row as f32 + 0.5) * row_h - self.viewport_h * ANCHOR_FRACTION
+    }
+}
 
 /// Syntax highlights of the read-only sides, computed with the conflict (off the UI thread).
 #[derive(Debug, Default)]
@@ -94,17 +103,20 @@ pub(super) struct Editor {
     output_syntax: OutputSyntax,
     /// The pane layout drawn last frame (a different arrangement re-reveals the current chunk).
     layout: Option<Node>,
+    /// Widest line of ours / theirs in columns (the width their panes scroll sideways to).
+    side_cols: [usize; 2],
 }
 
 impl Editor {
     pub(super) fn new(model: MergeModel, syntax: SideSyntax) -> Self {
         Self {
-            model,
             scroll: [PaneScroll::default(); 3],
             reveal: true,
             syntax,
             output_syntax: OutputSyntax::default(),
             layout: None,
+            side_cols: [Side::Ours, Side::Theirs].map(|side| rows::max_columns(model.side_text(side))),
+            model,
         }
     }
 
@@ -118,8 +130,7 @@ impl Editor {
         for pane in PANES {
             let Some(range) = self.model.chunk_range(pane, i) else { continue };
             let s = self.scroll_mut(pane);
-            let row_h = if s.row_h > 0.0 { s.row_h } else { ROW_H };
-            s.set = Some((range.start as f32 * row_h - s.viewport_h * ANCHOR_FRACTION).max(0.0));
+            s.set = Some(s.anchor_for(range.start).max(0.0));
         }
     }
 
@@ -129,10 +140,8 @@ impl Editor {
         let chunks: Vec<[Option<f32>; 3]> = (0..self.model.chunk_count())
             .map(|i| {
                 PANES.map(|pane| {
-                    let s = self.scroll[pane_index(pane)];
-                    let row_h = if s.row_h > 0.0 { s.row_h } else { ROW_H };
                     let range = self.model.chunk_range(pane, i)?;
-                    Some(range.start as f32 * row_h - s.viewport_h * ANCHOR_FRACTION)
+                    Some(self.scroll[pane_index(pane)].anchor_for(range.start))
                 })
             })
             .collect();
@@ -205,6 +214,13 @@ fn anchor_offset(anchors: &[f32], segment: usize, progress: f32) -> f32 {
     let start = anchors[segment];
     let end = anchors.get(segment + 1).copied().unwrap_or(start);
     start + (end - start) * progress
+}
+
+fn side_index(side: Side) -> usize {
+    match side {
+        Side::Ours => 0,
+        Side::Theirs => 1,
+    }
 }
 
 fn pane_index(pane: Pane) -> usize {
@@ -728,9 +744,15 @@ const RIBBON_W: f32 = 4.0;
 const PANE_GAP: f32 = 1.0;
 
 fn editor_body(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, labels: &Labels, saving: bool) {
+    // Until every pane has been laid out once its viewport height is unknown, and a reveal would put the chunk at
+    // the top instead of centring it: wait for that frame (the file was just opened).
     if editor.reveal {
-        editor.reveal = false;
-        editor.reveal_current();
+        if editor.scroll.iter().all(|s| s.viewport_h > 0.0) {
+            editor.reveal = false;
+            editor.reveal_current();
+        } else {
+            ui.ctx().request_repaint();
+        }
     }
     let mut edits: Vec<Edit> = Vec::new();
     let full = ui.available_rect_before_wrap();
@@ -1213,7 +1235,8 @@ fn source_pane(ui: &mut Ui, p: &Palette, editor: &mut Editor, side: Side, label:
     let gutter_w = rows::gutter_width(ui, lines + usize::from(trailing_row));
     let current = model.current();
     let scroll = editor.scroll[pane_index(pane)];
-    let mut area = ScrollArea::vertical()
+    let content_w = rows::row_width(ui, SPINE_COL, gutter_w, editor.side_cols[side_index(side)]);
+    let mut area = ScrollArea::both()
         .id_salt(("merge-pane", word))
         .auto_shrink([false, false])
         .max_height(body_h)
@@ -1223,8 +1246,13 @@ fn source_pane(ui: &mut Ui, p: &Palette, editor: &mut Editor, side: Side, label:
         area = area.vertical_scroll_offset(y);
     }
     let out = area.show_rows(ui, ROW_H, total_rows, |ui, visible| {
+        let row_w = ui.available_width().max(content_w);
+        let view = ui.clip_rect();
         for r in visible {
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+            let (full, resp) = ui.allocate_exact_size(Vec2::new(row_w, ROW_H), Sense::click());
+            // The visible part of the row: the spine and line numbers stay put while the text scrolls sideways.
+            let rect = Rect::from_x_y_ranges(view.x_range(), full.y_range());
+            let scroll_x = rect.left() - full.left();
             let in_chunk = model.chunk_at(pane, r);
             let starting = model.chunk_starting_at(pane, r);
             let mut style = RowStyle::default();
@@ -1267,7 +1295,7 @@ fn source_pane(ui: &mut Ui, p: &Palette, editor: &mut Editor, side: Side, label:
             let text = model.side_line(side, r).unwrap_or("");
             let colors = syntax.line_colors(model.side_text(side), r, text.trim_end_matches(['\n', '\r']), p);
             let plain_number = (line_in_chunk.is_none() && (r < lines || trailing_row)).then_some(r + 1);
-            rows::paint_row(ui, rect, p, SPINE_COL, gutter_w, plain_number, text, &colors, style);
+            rows::paint_row(ui, rect, p, SPINE_COL, gutter_w, plain_number, text, &colors, style, scroll_x);
             // Clicking a chunk line anywhere uses or drops it (as its number chip does), and makes its chunk current.
             let resp = if line_in_chunk.is_some() {
                 resp.on_hover_cursor(CursorIcon::PointingHand)
@@ -1453,7 +1481,7 @@ fn output_pane(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, heigh
     let text_left_pad = gutter_w + RIBBON_W + 8.0;
     let scroll = editor.scroll[pane_index(Pane::Output)];
     let programmatic = scroll.set.is_some();
-    let mut area = ScrollArea::vertical()
+    let mut area = ScrollArea::both()
         .id_salt("merge-output-scroll")
         .auto_shrink([false, false])
         .max_height(height)
@@ -1483,6 +1511,7 @@ fn output_pane(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, heigh
             .code_editor()
             .frame(Frame::NONE.inner_margin(margin))
             .desired_width(f32::INFINITY)
+            .clip_text(false)
             .desired_rows(1)
             .interactive(!saving)
             .layouter(&mut layouter)
@@ -1494,10 +1523,13 @@ fn output_pane(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, heigh
         if output.response.response.changed() {
             editor.model.sync_after_edit(now);
         }
-        // Backgrounds, the origin ribbon and line numbers, for visible rows only; state chips on top of the text.
+        // Backgrounds under the text; the gutter (line numbers and origin ribbon) over it, pinned to the left edge
+        // while the text scrolls sideways beneath it; state chips on top. Visible rows only.
+        let over = ui.painter().add(Shape::Noop);
         let model = &editor.model;
-        let rect = output.response.response.rect;
         let clip = ui.clip_rect();
+        let text_rect = output.response.response.rect;
+        let rect = Rect::from_x_y_ranges(clip.left()..=text_rect.right().max(clip.right()), text_rect.y_range());
         let galley = &output.galley;
         let origin = output.galley_pos;
         let first = galley.rows.partition_point(|r| origin.y + r.rect().max.y < clip.top());
@@ -1505,11 +1537,17 @@ fn output_pane(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, heigh
         let band_left = ribbon_x + RIBBON_W;
         let current = model.current();
         let rule = p.text_muted;
-        let mut shapes = vec![Shape::rect_filled(
+        let mut shapes = Vec::new();
+        let mut gutter = vec![Shape::rect_filled(
+            Rect::from_min_max(pos2(rect.left(), clip.top()), pos2(band_left, clip.bottom())),
+            0.0,
+            p.bg_graph,
+        )];
+        gutter.push(Shape::rect_filled(
             Rect::from_min_max(pos2(rect.left(), clip.top()), pos2(ribbon_x, clip.bottom())),
             0.0,
             p.bg_graph_alt,
-        )];
+        ));
         let mut chips: Vec<(usize, f32)> = Vec::new();
         let painter = ui.painter();
         for (j, row) in galley.rows.iter().enumerate().skip(first) {
@@ -1535,9 +1573,9 @@ fn output_pane(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, heigh
                 if s == Status::Unresolved {
                     // Striped: the result still holds the base lines here.
                     let half = Rect::from_min_size(ribbon.min, Vec2::new(RIBBON_W, row_h * 0.6));
-                    shapes.push(Shape::rect_filled(half, 0.0, line_color));
+                    gutter.push(Shape::rect_filled(half, 0.0, line_color));
                 } else {
-                    shapes.push(Shape::rect_filled(ribbon, 0.0, line_color));
+                    gutter.push(Shape::rect_filled(ribbon, 0.0, line_color));
                 }
                 if i == current {
                     if k == 0 {
@@ -1576,6 +1614,7 @@ fn output_pane(ui: &mut Ui, p: &Palette, path: &Path, editor: &mut Editor, heigh
             }
         }
         painter.set(bg, Shape::Vec(shapes));
+        painter.set(over, Shape::Vec(gutter));
         for (i, top) in chips {
             state_chip(ui, p, &model.chunks()[i], pos2(clip.right() - 10.0, top + row_h / 2.0));
         }

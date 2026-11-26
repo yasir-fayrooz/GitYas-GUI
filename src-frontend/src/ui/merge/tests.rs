@@ -746,3 +746,55 @@ fn snapshot_merge_views_light() {
     settle_frames(&mut t);
     t.snapshot("merge_action_card_light");
 }
+
+/// 120 lines with one conflict at line 61 whose lines run far past the pane's width.
+fn far_wide_conflict() -> MergeConflict {
+    let side = |mid: &str| {
+        let mut s = String::new();
+        for i in 0..120 {
+            if i == 60 {
+                s.push_str(&format!("let {mid} = \"{}\";\n", "wide ".repeat(80)));
+            } else {
+                s.push_str(&format!("line {i}\n"));
+            }
+        }
+        s
+    };
+    let mut c = sample_conflict();
+    c.ancestor = side("base");
+    c.merged = side("base");
+    c.ours = side("ours");
+    c.theirs = side("theirs");
+    c.chunks[0].ours_start = 60;
+    c.chunks[0].ours_end = 61;
+    c.chunks[0].theirs_start = 60;
+    c.chunks[0].theirs_end = 61;
+    c.chunks[0].ancestor_start = 60;
+    c.chunks[0].ancestor_end = 61;
+    c.chunks[0].merged_start = 60;
+    c.chunks[0].merged_end = 61;
+    c
+}
+
+#[test]
+fn opening_a_file_centres_the_first_conflict_in_every_pane() {
+    let mut t = TestApp::mock();
+    inject(&mut t, "src/main.rs", far_wide_conflict());
+    steps(&mut t);
+    let ours = t.harness.get_by_label("Use ours for conflict 1").rect();
+    let theirs = t.harness.get_by_label("Use theirs for conflict 1").rect();
+    let ours_head = t.harness.get_by_label_contains("Ours: ").rect();
+    let theirs_head = t.harness.get_by_label_contains("Theirs: ").rect();
+    // Default layout: ours above theirs, so ours' body runs from its header down to theirs' header.
+    assert!(
+        theirs_head.top() > ours_head.bottom(),
+        "layout changed: {ours_head:?} {theirs_head:?}"
+    );
+    let ours_body_mid = (ours_head.bottom() + theirs_head.top()) / 2.0;
+    assert!(
+        (ours.center().y - ours_body_mid).abs() <= 2.0,
+        "ours not centred: {ours:?}, body middle {ours_body_mid}"
+    );
+    // Before the panes are laid out the chunk would land at the top; it must sit well below the header.
+    assert!(theirs.top() > theirs_head.bottom() + 100.0, "theirs not centred: {theirs:?}");
+}

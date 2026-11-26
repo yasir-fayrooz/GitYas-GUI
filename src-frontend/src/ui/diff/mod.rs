@@ -360,17 +360,26 @@ pub fn close(app: &mut GitYasApp) {
     }
 }
 
-/// Working-tree diffs follow the file lists: re-fetch when they change, or show "No file changes" when the file
-/// left the list (staged / discarded / reverted).
+/// Working-tree diffs follow the file lists: re-fetch when they change, show "No file changes" when the file
+/// left its list but is still in the other one (staged / unstaged), and close when it is in neither (committed,
+/// discarded, reverted).
 pub fn on_event(app: &mut GitYasApp, event: &AppEvent) {
-    let AppEvent::GitFilesChanged { files, .. } = event else { return };
+    let AppEvent::GitFilesChanged { repo, files } = event else { return };
+    if app.store.active.as_ref() != Some(repo) {
+        return;
+    }
     let Some(tab) = app.tab_mut() else { return };
     let Center::Diff(request) = &tab.center else { return };
     let DiffTarget::WorkingTree { staged } = request.target else {
         return;
     };
-    let list = if staged { &files.staged } else { &files.unstaged };
+    let (list, other) = if staged {
+        (&files.staged, &files.unstaged)
+    } else {
+        (&files.unstaged, &files.staged)
+    };
     match list.iter().find(|d| d.path == request.file.path) {
+        None if !other.iter().any(|d| d.path == request.file.path) => close(app),
         None => {
             let d = &mut tab.diff;
             d.generation += 1;

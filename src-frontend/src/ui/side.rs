@@ -142,7 +142,7 @@ fn changes(ui: &mut Ui, app: &mut GitYasApp) {
     let mut expanded = app.layout.showing(page) && app.store.repo.is_some();
     let (default, range) = page.size();
     restore_width(ui.ctx(), page);
-    egui::Panel::left(drawer_id(page))
+    let shown = egui::Panel::left(drawer_id(page))
         .resizable(true)
         .drag_to_open(false)
         .default_size(default)
@@ -159,9 +159,69 @@ fn changes(ui: &mut Ui, app: &mut GitYasApp) {
                 }
             });
         });
+    let rect = shown.map_or(egui::Rect::NOTHING, |r| r.response.rect);
+    ui.data_mut(|d| d.insert_temp(changes_rect_id(), rect));
     remember_width(ui.ctx(), page);
     // `expanded` comes back false when the edge is dragged below the minimum width or double-clicked; that is
     // ignored, so resizing stops at the minimum.
+}
+
+fn changes_rect_id() -> egui::Id {
+    egui::Id::NULL.with("changes_panel_rect")
+}
+
+fn commit_row_id() -> egui::Id {
+    egui::Id::NULL.with("pointer_on_commit_row")
+}
+
+/// The pointer is over a commit row of the graph this frame (a click there selects that commit instead).
+pub fn mark_commit_row(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(commit_row_id(), true));
+}
+
+/// What [`dismiss_details`] needs from before the frame was drawn.
+pub struct DetailsGuard {
+    repo: Option<gityas_core::RepoId>,
+    selection: Selection,
+    /// A modal or popup was open: the click is for it (or closes it), not for the details.
+    busy: bool,
+}
+
+/// Call before drawing the frame.
+pub fn details_guard(ctx: &egui::Context, app: &GitYasApp, modal_open: bool) -> DetailsGuard {
+    DetailsGuard {
+        repo: app.store.active.clone(),
+        selection: app.tab().map(|t| t.selection.clone()).unwrap_or_default(),
+        busy: modal_open || app.confirm.is_some() || egui::Popup::is_any_open(ctx),
+    }
+}
+
+/// Commit / stash details close (back to the working tree) on a click anywhere outside the Changes panel, except
+/// on a commit row (that selects it), inside a menu or dialog, or on the diff of the commit being shown (`center`
+/// is the centre view's area). Call after drawing the frame.
+pub fn dismiss_details(ctx: &egui::Context, app: &mut GitYasApp, guard: DetailsGuard, center: egui::Rect) {
+    let on_commit_row = ctx.data_mut(|d| d.remove_temp::<bool>(commit_row_id())).unwrap_or(false);
+    let panel = ctx
+        .data(|d| d.get_temp::<egui::Rect>(changes_rect_id()))
+        .unwrap_or(egui::Rect::NOTHING);
+    let Some(pos) = ctx.input(|i| i.pointer.primary_clicked().then(|| i.pointer.interact_pos()).flatten()) else {
+        return;
+    };
+    let target = match &guard.selection {
+        Selection::Commit(id) => gityas_core::diff::DiffTarget::Commit(id.clone()),
+        Selection::Stash(id) => gityas_core::diff::DiffTarget::Stash(id.clone()),
+        Selection::Wip => return,
+    };
+    let Some(tab) = app.tab() else { return };
+    let unchanged = app.store.active == guard.repo && tab.selection == guard.selection;
+    let on_background = ctx.layer_id_at(pos).is_none_or(|l| l.order == egui::Order::Background);
+    let on_its_diff = center.contains(pos) && matches!(&tab.center, Center::Diff(r) if r.target == target);
+    if guard.busy || !unchanged || on_commit_row || !on_background || on_its_diff || panel.contains(pos) {
+        return;
+    }
+    if let Some(tab) = app.tab_mut() {
+        tab.selection = Selection::Wip;
+    }
 }
 
 fn padded(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
@@ -344,6 +404,57 @@ mod tests {
         t.harness.set_size(size);
         steps(&mut t, 2);
         assert_eq!(width(&mut t, SidePage::Changes), dragged);
+    }
+
+    fn selection(t: &mut TestApp) -> Selection {
+        t.app().tab().map(|t| t.selection.clone()).unwrap_or_default()
+    }
+
+    fn click_label(t: &mut TestApp, label: &str) {
+        t.harness.get_by_label(label).click();
+        steps(t, 3);
+    }
+
+    #[test]
+    fn commit_details_close_on_a_click_outside_them_but_not_on_another_commit() {
+        let mut t = TestApp::mock();
+        steps(&mut t, 3);
+        let summaries: Vec<String> = t
+            .app()
+            .store
+            .repo
+            .as_ref()
+            .map(|r| r.commits.commits.iter().take(3).map(|c| c.summary.clone()).collect())
+            .unwrap_or_default();
+        let [first, second, ..] = summaries.as_slice() else {
+            panic!("mock history too short")
+        };
+        click_label(&mut t, first);
+        assert!(matches!(selection(&mut t), Selection::Commit(_)));
+        // Inside the details: they stay.
+        click_label(&mut t, "Copy full SHA");
+        assert!(matches!(selection(&mut t), Selection::Commit(_)));
+        // Another commit: its details replace them.
+        click_label(&mut t, second);
+        let Selection::Commit(id) = selection(&mut t) else {
+            panic!("second commit not selected")
+        };
+        assert_eq!(t.app().store.repo.as_ref().and_then(|r| r.commit_index(&id)), Some(1));
+        // Any other button: back to the working tree.
+        click(&mut t, "Settings");
+        assert_eq!(selection(&mut t), Selection::Wip);
+        click(&mut t, "Settings");
+        // An empty spot outside the panel closes them too.
+        click_label(&mut t, first);
+        assert!(matches!(selection(&mut t), Selection::Commit(_)));
+        let status = t.harness.get_by_label("MOCK DATA").rect();
+        t.harness.hover_at(status.center() + egui::vec2(400.0, 0.0));
+        t.harness.step();
+        t.harness.drag_at(status.center() + egui::vec2(400.0, 0.0));
+        t.harness.step();
+        t.harness.drop_at(status.center() + egui::vec2(400.0, 0.0));
+        steps(&mut t, 3);
+        assert_eq!(selection(&mut t), Selection::Wip);
     }
 
     #[test]

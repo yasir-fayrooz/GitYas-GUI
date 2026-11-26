@@ -14,6 +14,26 @@ How to write it:
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-26
+
+### Changed
+
+- The merge editor opens with the first conflict centred in every pane, and moving between conflicts centres each
+  one too.
+- Commit and stash details close when you click anywhere outside them, except on another commit (which shows its
+  details instead).
+- The file viewer closes once its file has no changes left, for example after you commit it.
+- The add-repository dialog remembers the last folder you picked and starts there, including as the default clone
+  location.
+
+### Fixed
+
+- Long lines in the merge editor can now be scrolled sideways; the line numbers stay in place.
+- Long worktree branch names in the branches sidebar end in an ellipsis instead of running over the worktree's
+  name.
+- **What's new** shows the right release notes after an update.
+- Comments are easier to read in dark mode, including on highlighted word changes in diffs.
+
 ## [1.1.0] - 2026-11-25
 
 ### Added
