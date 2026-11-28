@@ -12,7 +12,7 @@ How to write it:
   [links](https://example.com) and code blocks.
 - Write for users, not for the commit log: what they can now do, what behaves differently, what is fixed.
 
-## [Unreleased]
+## [1.2.0] - 2026-11-28
 
 ### Added
 
