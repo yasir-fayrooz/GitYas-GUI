@@ -28,9 +28,9 @@ const RESERVED: [(Key, &str); 12] = [
     (Key::Escape, "goes back"),
     (Key::Backspace, "goes back"),
     (Key::Tab, "next file"),
-    (Key::A, "stages all in the changes list"),
+    (Key::A, "stages all in the changes list / applies a stash"),
     (Key::U, "unstages all in the changes list"),
-    (Key::D, "discards in the changes list"),
+    (Key::D, "discards a change / deletes a stash or tag"),
 ];
 
 /// One shortcut: modifiers and a key. `cmd` is ⌘ on macOS (egui's `mac_cmd`); elsewhere Ctrl is `ctrl`.
@@ -234,7 +234,6 @@ pub fn get(s: &SpeedSettings, binding: Binding) -> &str {
             Item::Branches => &s.branches,
             Item::NewBranch => &s.new_branch,
             Item::Stash => &s.stash,
-            Item::Pop => &s.pop,
             Item::Tag => &s.tag,
             Item::Exit => &s.exit,
         },
@@ -253,7 +252,6 @@ pub fn get_mut(s: &mut SpeedSettings, binding: Binding) -> &mut String {
             Item::Branches => &mut s.branches,
             Item::NewBranch => &mut s.new_branch,
             Item::Stash => &mut s.stash,
-            Item::Pop => &mut s.pop,
             Item::Tag => &mut s.tag,
             Item::Exit => &mut s.exit,
         },

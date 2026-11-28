@@ -9,9 +9,10 @@
 //!   changes, M commit, P push, …; configurable too).
 //!
 //! Screens: the menu, the changes list (stage / unstage / discard one or all), a file viewer (the working-tree diff
-//! of one file), the commit box and the branch list. Stash, tag and new branch reuse the main window's dialogs,
-//! which already work from the keyboard (Enter / Esc). Everything calls the same functions as the main window, so
-//! the engine's events update both.
+//! of one file), the commit box, the branch list (local and remote branches), the stash list ("Stash all changes",
+//! then apply / pop / delete a stash), the tag list (a field to create a tag on HEAD, then push / delete a tag) and
+//! an actions list for the selected stash or tag. New branch is a one-field prompt. Everything calls the same
+//! functions as the main window, so the engine's events update both.
 
 mod desktop;
 pub mod keys;
@@ -21,8 +22,9 @@ use std::sync::Arc;
 use egui::{Align2, Event, FontId, Key, Pos2, Rect, RichText, Sense, Ui, Vec2, ViewportCommand, vec2};
 use egui_phosphor::regular as icon;
 use gityas_core::AppEvent;
+use gityas_core::Oid;
 use gityas_core::diff::{DiffTarget, FileDiff, LineOrigin};
-use gityas_core::models::Delta;
+use gityas_core::models::{Branch, BranchKind, Delta, Stash, Tag};
 
 use crate::app::{GitYasApp, MIN_WINDOW_SIZE};
 use crate::bridge::TaskKey;
@@ -48,6 +50,7 @@ const ROW_HEIGHT: f32 = 26.0;
 const FLASH_SECS: f64 = 2.5;
 const SUMMARY_ID: &str = "speed_commit_summary";
 const PROMPT_ID: &str = "speed_prompt";
+const TAG_ID: &str = "speed_tag_name";
 const TASK_PROMPT: TaskKey = "speed_prompt";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,6 +61,12 @@ pub enum Screen {
     Viewer,
     Commit,
     Branches,
+    /// "Stash all changes", then the stash list.
+    Stashes,
+    /// The new-tag field, then the tag list.
+    Tags,
+    /// What can be done with the stash / tag picked in its list (`SpeedUi::target`).
+    Actions,
     /// A one-field form inside the panel (the main window's dialogs are too big for it).
     Prompt(Prompt),
 }
@@ -65,29 +74,71 @@ pub enum Screen {
 /// What the prompt screen asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
-    /// A lightweight tag on HEAD.
-    Tag,
     /// A branch from HEAD, checked out.
     Branch,
-    /// Stash all changes (untracked included), with an optional message.
-    Stash,
 }
 
 impl Prompt {
     fn title(self) -> &'static str {
         match self {
-            Prompt::Tag => "Tag HEAD",
             Prompt::Branch => "New branch",
-            Prompt::Stash => "Stash changes",
         }
     }
 
     fn hint(self) -> &'static str {
         match self {
-            Prompt::Tag => "Tag name, e.g. v1.0.0",
             Prompt::Branch => "Branch name",
-            Prompt::Stash => "Message (optional)",
         }
+    }
+}
+
+/// The stash or tag the actions screen is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Target {
+    Stash { id: Oid, label: String },
+    Tag { name: String, commit: Oid },
+}
+
+/// One entry of the actions screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Action {
+    ApplyStash,
+    PopStash,
+    DeleteStash,
+    PushTag(String),
+    CheckoutTag,
+    CopyTagName,
+    DeleteTag,
+    DeleteRemoteTag(String),
+}
+
+impl Action {
+    fn label(&self) -> String {
+        match self {
+            Action::ApplyStash => "Apply (keep the stash)".into(),
+            Action::PopStash => "Pop (apply, then delete it)".into(),
+            Action::DeleteStash => "Delete stash".into(),
+            Action::PushTag(remote) => format!("Push to {remote}"),
+            Action::CheckoutTag => "Check out (detached HEAD)".into(),
+            Action::CopyTagName => "Copy name".into(),
+            Action::DeleteTag => "Delete tag".into(),
+            Action::DeleteRemoteTag(remote) => format!("Delete from {remote}"),
+        }
+    }
+
+    fn glyph(&self) -> &'static str {
+        match self {
+            Action::ApplyStash => icon::TRAY_ARROW_UP,
+            Action::PopStash => icon::ARROW_SQUARE_OUT,
+            Action::PushTag(_) => icon::ARROW_LINE_UP,
+            Action::CheckoutTag => icon::GIT_COMMIT,
+            Action::CopyTagName => icon::COPY,
+            Action::DeleteStash | Action::DeleteTag | Action::DeleteRemoteTag(_) => icon::TRASH,
+        }
+    }
+
+    fn danger(&self) -> bool {
+        matches!(self, Action::DeleteStash | Action::DeleteTag | Action::DeleteRemoteTag(_))
     }
 }
 
@@ -129,6 +180,15 @@ pub struct SpeedUi {
     home: usize,
     changes: usize,
     branches: usize,
+    /// Stash screen cursor: 0 is "Stash all changes", then the stashes.
+    stashes: usize,
+    /// Tag screen cursor: 0 is the new-tag field (typing), then the tags.
+    tags: usize,
+    actions: usize,
+    target: Option<Target>,
+    /// The tag screen's new-tag name and whether its field still needs the focus.
+    tag_text: String,
+    focus_tag: bool,
     viewer: Option<Viewer>,
     restore: Option<Restore>,
     /// The app the summon shortcut took the focus from; it gets it back when the panel is tucked away.
@@ -357,6 +417,14 @@ fn go(ctx: &egui::Context, app: &mut GitYasApp, screen: Screen) {
             s.prompt_text.clear();
             s.focus_prompt = true;
         }
+        Screen::Tags => {
+            s.tags = 0;
+            s.focus_tag = true;
+        }
+        Screen::Actions => {
+            s.actions = 0;
+            release_text_focus(ctx);
+        }
         _ => release_text_focus(ctx),
     }
 }
@@ -365,6 +433,7 @@ fn release_text_focus(ctx: &egui::Context) {
     ctx.memory_mut(|m| {
         m.surrender_focus(egui::Id::new(SUMMARY_ID));
         m.surrender_focus(egui::Id::new(PROMPT_ID));
+        m.surrender_focus(egui::Id::new(TAG_ID));
     });
 }
 
@@ -373,7 +442,12 @@ fn back(ctx: &egui::Context, app: &mut GitYasApp) {
     release_text_focus(ctx);
     let s = &mut app.speed;
     match s.back.pop() {
-        Some(screen) => s.screen = screen,
+        Some(screen) => {
+            s.screen = screen;
+            if screen == Screen::Tags && s.tags == 0 {
+                s.focus_tag = true;
+            }
+        }
         None if s.screen != Screen::Home => s.screen = Screen::Home,
         None => {
             s.scroll_to_cursor = true;
@@ -389,6 +463,9 @@ fn cursor(app: &GitYasApp) -> usize {
         Screen::Home => app.speed.home,
         Screen::Changes => app.speed.changes,
         Screen::Branches => app.speed.branches,
+        Screen::Stashes => app.speed.stashes,
+        Screen::Tags => app.speed.tags,
+        Screen::Actions => app.speed.actions,
         Screen::Viewer | Screen::Commit | Screen::Prompt(_) => 0,
     }
 }
@@ -399,6 +476,9 @@ fn set_cursor(app: &mut GitYasApp, value: usize) {
         Screen::Home => s.home = value,
         Screen::Changes => s.changes = value,
         Screen::Branches => s.branches = value,
+        Screen::Stashes => s.stashes = value,
+        Screen::Tags => s.tags = value,
+        Screen::Actions => s.actions = value,
         Screen::Viewer | Screen::Commit | Screen::Prompt(_) => {}
     }
     s.scroll_to_cursor = true;
@@ -414,7 +494,12 @@ fn move_cursor(app: &mut GitYasApp, delta: isize, len: usize) {
 // ---- Keys -------------------------------------------------------------------------------------------------------
 
 fn handle_keys(ctx: &egui::Context, app: &mut GitYasApp) {
-    let typing = matches!(app.speed.screen, Screen::Commit | Screen::Prompt(_)) && !app.speed.collapsed;
+    let typing = !app.speed.collapsed
+        && match app.speed.screen {
+            Screen::Commit | Screen::Prompt(_) => true,
+            Screen::Tags => app.speed.tags == 0,
+            _ => false,
+        };
     let events = ctx.input(|i| i.events.clone());
     if !typing {
         // The panel's keys are not egui's focus navigation.
@@ -433,6 +518,7 @@ fn handle_keys(ctx: &egui::Context, app: &mut GitYasApp) {
         if typing {
             match app.speed.screen {
                 Screen::Prompt(prompt) => prompt_key(ctx, app, prompt, key, modifiers),
+                Screen::Tags => tag_field_key(ctx, app, key, modifiers),
                 _ => commit_key(ctx, app, key, modifiers),
             }
         } else {
@@ -478,6 +564,9 @@ fn key_press(ctx: &egui::Context, app: &mut GitYasApp, key: Key, modifiers: egui
         Some(Screen::Changes) => changes_key(ctx, app, key),
         Some(Screen::Viewer) => viewer_key(app, key, modifiers),
         Some(Screen::Branches) => branches_key(app, key),
+        Some(Screen::Stashes) => stashes_key(ctx, app, key),
+        Some(Screen::Tags) => tags_key(ctx, app, key),
+        Some(Screen::Actions) => actions_key(ctx, app, key),
         Some(Screen::Commit | Screen::Prompt(_)) | None => false,
     };
     let pressed = Combo::from_event(key, modifiers);
@@ -503,7 +592,6 @@ pub enum Item {
     Branches,
     NewBranch,
     Stash,
-    Pop,
     Tag,
     Exit,
 }
@@ -519,7 +607,7 @@ const fn menu(item: Item, glyph: &'static str, label: &'static str) -> MenuItem 
 }
 
 /// The menu, in order. Each action's key (`SpeedSettings`) works on every screen except while typing.
-pub const HOME: [MenuItem; 11] = [
+pub const HOME: [MenuItem; 10] = [
     menu(Item::Changes, icon::FILES, "Stage / unstage changes"),
     menu(Item::Commit, icon::CHECK_CIRCLE, "Commit"),
     menu(Item::Push, icon::ARROW_LINE_UP, "Push"),
@@ -527,9 +615,8 @@ pub const HOME: [MenuItem; 11] = [
     menu(Item::Fetch, icon::ARROWS_CLOCKWISE, "Fetch"),
     menu(Item::Branches, icon::GIT_BRANCH, "Switch branch"),
     menu(Item::NewBranch, icon::PLUS, "New branch"),
-    menu(Item::Stash, icon::TRAY_ARROW_DOWN, "Stash changes"),
-    menu(Item::Pop, icon::TRAY_ARROW_UP, "Pop latest stash"),
-    menu(Item::Tag, icon::TAG, "Tag HEAD"),
+    menu(Item::Stash, icon::TRAY, "Stashes"),
+    menu(Item::Tag, icon::TAG, "Tags"),
     menu(Item::Exit, icon::SIGN_OUT, "Exit speed mode"),
 ];
 
@@ -554,9 +641,8 @@ fn run_item(ctx: &egui::Context, app: &mut GitYasApp, item: Item) {
         Item::Pull => remote::pull_current(app),
         Item::Fetch => remote::fetch_all(app),
         Item::NewBranch => go(ctx, app, Screen::Prompt(Prompt::Branch)),
-        Item::Stash => go(ctx, app, Screen::Prompt(Prompt::Stash)),
-        Item::Pop => worktree::pop_latest(app),
-        Item::Tag => go(ctx, app, Screen::Prompt(Prompt::Tag)),
+        Item::Stash => go(ctx, app, Screen::Stashes),
+        Item::Tag => go(ctx, app, Screen::Tags),
         Item::Exit => {}
     }
 }
@@ -768,8 +854,18 @@ fn viewer_key(app: &mut GitYasApp, key: Key, modifiers: egui::Modifiers) -> bool
 
 // ---- Branches ---------------------------------------------------------------------------------------------------
 
+/// The branch list: local branches, then remote-tracking ones (symbolic refs such as `origin/HEAD` left out).
+fn branch_rows(app: &GitYasApp) -> Vec<Branch> {
+    let Some(repo) = app.store.repo.as_ref() else { return Vec::new() };
+    let remote = repo
+        .remote_branches
+        .iter()
+        .filter(|b| b.target.is_some() && !b.name.ends_with("/HEAD"));
+    repo.local_branches.iter().chain(remote).cloned().collect()
+}
+
 fn branches_key(app: &mut GitYasApp, key: Key) -> bool {
-    let branches: Vec<_> = app.store.repo.as_ref().map(|r| r.local_branches.clone()).unwrap_or_default();
+    let branches = branch_rows(app);
     match key {
         Key::ArrowUp => move_cursor(app, -1, branches.len()),
         Key::ArrowDown => move_cursor(app, 1, branches.len()),
@@ -778,6 +874,7 @@ fn branches_key(app: &mut GitYasApp, key: Key) -> bool {
                 if branch.is_head {
                     app.notify.info(format!("Already on {}", branch.name));
                 } else {
+                    // A remote branch checks out its local tracking branch (created or fast-forwarded by the engine).
                     history::run(
                         app,
                         vec![history::Intent::CheckoutBranch {
@@ -793,92 +890,68 @@ fn branches_key(app: &mut GitYasApp, key: Key) -> bool {
     true
 }
 
-// ---- Prompts (tag / new branch / stash) ---------------------------------------------------------------------
+// ---- Stashes ----------------------------------------------------------------------------------------------------
 
-/// Why the prompt's text cannot be submitted yet; `None` when it can.
-fn prompt_problem(app: &GitYasApp, prompt: Prompt, text: &str) -> Option<&'static str> {
-    let repo = app.store.repo.as_ref()?;
-    let name = text.trim();
-    match prompt {
-        Prompt::Stash if !repo.has_wip() => Some("Nothing to stash"),
-        Prompt::Stash => None,
-        Prompt::Tag | Prompt::Branch => {
-            if let Some(problem) = history::model::ref_name_error(name) {
-                return Some(problem);
-            }
-            let taken = match prompt {
-                Prompt::Tag => repo.commits.tag(name).is_some(),
-                _ => repo.local_branches.iter().any(|b| b.name == name),
-            };
-            if taken {
-                return Some("Already exists");
-            }
-            (prompt == Prompt::Tag && repo.head_target().is_none()).then_some("No commits to tag yet")
-        }
-    }
+fn stash_rows(app: &GitYasApp) -> Vec<Stash> {
+    app.store
+        .repo
+        .as_ref()
+        .map(|r| r.stashes.iter().map(|s| s.stash.clone()).collect())
+        .unwrap_or_default()
 }
 
-/// Keys of the prompt screen (its field takes the rest): Enter submits, Ctrl / Cmd+Enter also pushes a tag.
-fn prompt_key(ctx: &egui::Context, app: &mut GitYasApp, prompt: Prompt, key: Key, modifiers: egui::Modifiers) {
+/// The stash under the cursor (row 0 is "Stash all changes").
+fn current_stash(app: &GitYasApp) -> Option<Stash> {
+    let i = app.speed.stashes.checked_sub(1)?;
+    stash_rows(app).into_iter().nth(i)
+}
+
+fn stash_title(stash: &Stash) -> String {
+    let message = stash.message.trim();
+    if message.is_empty() { stash.revspec() } else { message.to_owned() }
+}
+
+fn stashes_key(ctx: &egui::Context, app: &mut GitYasApp, key: Key) -> bool {
+    let len = stash_rows(app).len() + 1;
+    let current = current_stash(app);
     match key {
-        Key::Escape => back(ctx, app),
-        Key::Enter => {
-            let text = app.speed.prompt_text.clone();
-            if let Some(problem) = prompt_problem(app, prompt, &text) {
-                app.notify.info(problem);
-                app.speed.focus_prompt = true;
-                return;
-            }
-            if app.bridge.is_running(TASK_PROMPT) {
-                return;
-            }
-            submit_prompt(app, prompt, text, modifiers.command);
-            back(ctx, app);
+        Key::ArrowUp => move_cursor(app, -1, len),
+        Key::ArrowDown => move_cursor(app, 1, len),
+        Key::Enter | Key::Space | Key::ArrowRight => match current {
+            None => stash_changes(app),
+            Some(stash) => open_actions(
+                ctx,
+                app,
+                Target::Stash {
+                    label: stash_title(&stash),
+                    id: stash.id,
+                },
+            ),
+        },
+        Key::A | Key::O | Key::D => {
+            let Some(stash) = current else { return true };
+            let intent = match key {
+                Key::A => history::Intent::ApplyStash(stash.id),
+                Key::O => history::Intent::PopStash(stash.id),
+                _ => history::Intent::DeleteStash(stash.id),
+            };
+            history::run(app, vec![intent]);
         }
-        _ => {}
+        _ => return false,
     }
+    true
 }
 
-fn submit_prompt(app: &mut GitYasApp, prompt: Prompt, text: String, push: bool) {
-    let name = text.trim().to_owned();
-    match prompt {
-        Prompt::Tag => {
-            let Some(head) = app.store.repo.as_ref().and_then(|r| r.head_target()).cloned() else {
-                return;
-            };
-            let remote = app
-                .store
-                .repo
-                .as_ref()
-                .and_then(|r| r.remotes.iter().find(|n| *n == "origin").or_else(|| r.remotes.first()).cloned());
-            let n = name.clone();
-            app.bridge.run(
-                TASK_PROMPT,
-                move |engine| async move { engine.create_tag(head, n, None).await },
-                move |app, result| match result {
-                    Ok(()) => {
-                        app.notify.success(format!("Created tag {name}"));
-                        if let (true, Some(remote)) = (push, remote) {
-                            history::run(app, vec![history::Intent::PushTag { remote, name }]);
-                        }
-                    }
-                    Err(err) => app.report_error(&format!("Could not create tag {name}"), &err),
-                },
-            );
-        }
-        Prompt::Branch => {
-            let n = name.clone();
-            app.bridge.run(
-                TASK_PROMPT,
-                move |engine| async move { engine.create_branch(n, None, true).await },
-                move |app, result| match result {
-                    Ok(_) => app.notify.success(format!("Created and switched to {name}")),
-                    Err(err) => app.report_error(&format!("Could not create branch {name}"), &err),
-                },
-            );
-        }
-        Prompt::Stash => stash_all(app, model::stash_message_arg(&text)),
+/// "Stash all changes": everything, untracked files included.
+fn stash_changes(app: &mut GitYasApp) {
+    if !app.store.repo.as_ref().is_some_and(|r| r.has_wip()) {
+        app.notify.info("Nothing to stash");
+        return;
     }
+    if app.bridge.is_running(TASK_PROMPT) {
+        return;
+    }
+    stash_all(app, None);
 }
 
 /// Stashes everything (untracked files too), asking for a signature first if there is none (stashes are commits).
@@ -898,21 +971,269 @@ fn stash_all(app: &mut GitYasApp, message: Option<String>) {
     );
 }
 
+// ---- Tags -------------------------------------------------------------------------------------------------------
+
+/// Tags, newest commit first (tags on commits outside the loaded history last), then by name.
+fn tag_rows(app: &GitYasApp) -> Vec<Tag> {
+    let Some(repo) = app.store.repo.as_ref() else { return Vec::new() };
+    let mut tags: Vec<Tag> = repo.commits.tags.iter().cloned().collect();
+    tags.sort_by(|a, b| {
+        let at = |t: &Tag| repo.commit_index(&t.target).unwrap_or(usize::MAX);
+        at(a).cmp(&at(b)).then_with(|| a.name.cmp(&b.name))
+    });
+    tags
+}
+
+/// The tag under the cursor (row 0 is the new-tag field).
+fn current_tag(app: &GitYasApp) -> Option<Tag> {
+    let i = app.speed.tags.checked_sub(1)?;
+    tag_rows(app).into_iter().nth(i)
+}
+
+/// The remote tags are pushed to: `origin`, else the first one.
+fn default_remote(app: &GitYasApp) -> Option<String> {
+    let remotes = &app.store.repo.as_ref()?.remotes;
+    remotes.iter().find(|n| *n == "origin").or_else(|| remotes.first()).cloned()
+}
+
+/// The remotes with the default one first.
+fn remotes_default_first(app: &GitYasApp) -> Vec<String> {
+    let mut remotes = app.store.repo.as_ref().map(|r| r.remotes.clone()).unwrap_or_default();
+    if let Some(at) = remotes.iter().position(|n| n == "origin") {
+        let origin = remotes.remove(at);
+        remotes.insert(0, origin);
+    }
+    remotes
+}
+
+/// Why `text` cannot be a new tag on HEAD; `None` when it can.
+fn tag_problem(app: &GitYasApp, text: &str) -> Option<&'static str> {
+    let repo = app.store.repo.as_ref()?;
+    let name = text.trim();
+    if let Some(problem) = history::model::ref_name_error(name) {
+        return Some(problem);
+    }
+    if repo.commits.tag(name).is_some() {
+        return Some("Already exists");
+    }
+    repo.head_target().is_none().then_some("No commits to tag yet")
+}
+
+/// Keys of the new-tag field (it takes the rest): Enter creates, Ctrl / Cmd+Enter also pushes it, ↓ moves to the
+/// tag list.
+fn tag_field_key(ctx: &egui::Context, app: &mut GitYasApp, key: Key, modifiers: egui::Modifiers) {
+    match key {
+        Key::Escape => back(ctx, app),
+        Key::ArrowDown if !tag_rows(app).is_empty() => {
+            release_text_focus(ctx);
+            set_cursor(app, 1);
+        }
+        Key::Enter => {
+            let text = app.speed.tag_text.clone();
+            if let Some(problem) = tag_problem(app, &text) {
+                app.notify.info(problem);
+                app.speed.focus_tag = true;
+                return;
+            }
+            if app.bridge.is_running(TASK_PROMPT) {
+                return;
+            }
+            create_tag(app, text.trim().to_owned(), modifiers.command);
+            app.speed.tag_text.clear();
+            app.speed.focus_tag = true;
+        }
+        _ => {}
+    }
+}
+
+fn tags_key(ctx: &egui::Context, app: &mut GitYasApp, key: Key) -> bool {
+    let len = tag_rows(app).len() + 1;
+    let current = current_tag(app);
+    match key {
+        Key::ArrowUp if app.speed.tags <= 1 => {
+            set_cursor(app, 0);
+            app.speed.focus_tag = true;
+        }
+        Key::ArrowUp => move_cursor(app, -1, len),
+        Key::ArrowDown => move_cursor(app, 1, len),
+        Key::Enter | Key::Space | Key::ArrowRight => {
+            if let Some(tag) = current {
+                open_actions(
+                    ctx,
+                    app,
+                    Target::Tag {
+                        name: tag.name,
+                        commit: tag.target,
+                    },
+                );
+            }
+        }
+        Key::P => {
+            if let Some(tag) = current {
+                match default_remote(app) {
+                    Some(remote) => history::run(app, vec![history::Intent::PushTag { remote, name: tag.name }]),
+                    None => app.notify.info("This repository has no remote to push to"),
+                }
+            }
+        }
+        Key::D => {
+            if let Some(tag) = current {
+                history::run(app, vec![history::Intent::DeleteTag(tag.name)]);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// A lightweight tag on HEAD; with `push`, pushed to the default remote once created.
+fn create_tag(app: &mut GitYasApp, name: String, push: bool) {
+    let Some(head) = app.store.repo.as_ref().and_then(|r| r.head_target()).cloned() else {
+        return;
+    };
+    let remote = default_remote(app);
+    let n = name.clone();
+    app.bridge.run(
+        TASK_PROMPT,
+        move |engine| async move { engine.create_tag(head, n, None).await },
+        move |app, result| match result {
+            Ok(()) => {
+                app.notify.success(format!("Created tag {name}"));
+                if push {
+                    match remote {
+                        Some(remote) => history::run(app, vec![history::Intent::PushTag { remote, name }]),
+                        None => app.notify.info("This repository has no remote to push to"),
+                    }
+                }
+            }
+            Err(err) => app.report_error(&format!("Could not create tag {name}"), &err),
+        },
+    );
+}
+
+// ---- Actions (selected stash / tag) -----------------------------------------------------------------------------
+
+fn open_actions(ctx: &egui::Context, app: &mut GitYasApp, target: Target) {
+    app.speed.target = Some(target);
+    go(ctx, app, Screen::Actions);
+}
+
+fn action_rows(app: &GitYasApp) -> Vec<Action> {
+    match &app.speed.target {
+        None => Vec::new(),
+        Some(Target::Stash { .. }) => vec![Action::ApplyStash, Action::PopStash, Action::DeleteStash],
+        Some(Target::Tag { .. }) => {
+            let remotes = remotes_default_first(app);
+            let mut actions: Vec<Action> = remotes.iter().cloned().map(Action::PushTag).collect();
+            actions.extend([Action::CheckoutTag, Action::CopyTagName, Action::DeleteTag]);
+            actions.extend(remotes.into_iter().map(Action::DeleteRemoteTag));
+            actions
+        }
+    }
+}
+
+/// Runs `action` on the target, back on its list (a confirmation, if it asks one, opens over the list).
+fn run_action(ctx: &egui::Context, app: &mut GitYasApp, action: Action) {
+    let Some(target) = app.speed.target.clone() else { return };
+    use history::Intent;
+    let intent = match (action, target) {
+        (Action::ApplyStash, Target::Stash { id, .. }) => Some(Intent::ApplyStash(id)),
+        (Action::PopStash, Target::Stash { id, .. }) => Some(Intent::PopStash(id)),
+        (Action::DeleteStash, Target::Stash { id, .. }) => Some(Intent::DeleteStash(id)),
+        (Action::PushTag(remote), Target::Tag { name, .. }) => Some(Intent::PushTag { remote, name }),
+        (Action::CheckoutTag, Target::Tag { commit, .. }) => Some(Intent::CheckoutCommit(commit)),
+        (Action::CopyTagName, Target::Tag { name, .. }) => {
+            ctx.copy_text(name.clone());
+            app.notify.info(format!("Copied {name}"));
+            None
+        }
+        (Action::DeleteTag, Target::Tag { name, .. }) => Some(Intent::DeleteTag(name)),
+        (Action::DeleteRemoteTag(remote), Target::Tag { name, .. }) => Some(Intent::DeleteRemoteTag { remote, name }),
+        _ => None,
+    };
+    back(ctx, app);
+    if let Some(intent) = intent {
+        history::run(app, vec![intent]);
+    }
+}
+
+fn actions_key(ctx: &egui::Context, app: &mut GitYasApp, key: Key) -> bool {
+    let actions = action_rows(app);
+    match key {
+        Key::ArrowUp => move_cursor(app, -1, actions.len()),
+        Key::ArrowDown => move_cursor(app, 1, actions.len()),
+        Key::Enter | Key::Space | Key::ArrowRight => {
+            if let Some(action) = actions.get(app.speed.actions).cloned() {
+                run_action(ctx, app, action);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+// ---- Prompt (new branch) ----------------------------------------------------------------------------------------
+
+/// Why the prompt's text cannot be submitted yet; `None` when it can.
+fn prompt_problem(app: &GitYasApp, prompt: Prompt, text: &str) -> Option<&'static str> {
+    let repo = app.store.repo.as_ref()?;
+    let name = text.trim();
+    match prompt {
+        Prompt::Branch => {
+            if let Some(problem) = history::model::ref_name_error(name) {
+                return Some(problem);
+            }
+            repo.local_branches.iter().any(|b| b.name == name).then_some("Already exists")
+        }
+    }
+}
+
+/// Keys of the prompt screen (its field takes the rest): Enter submits.
+fn prompt_key(ctx: &egui::Context, app: &mut GitYasApp, prompt: Prompt, key: Key, _modifiers: egui::Modifiers) {
+    match key {
+        Key::Escape => back(ctx, app),
+        Key::Enter => {
+            let text = app.speed.prompt_text.clone();
+            if let Some(problem) = prompt_problem(app, prompt, &text) {
+                app.notify.info(problem);
+                app.speed.focus_prompt = true;
+                return;
+            }
+            if app.bridge.is_running(TASK_PROMPT) {
+                return;
+            }
+            submit_prompt(app, prompt, text);
+            back(ctx, app);
+        }
+        _ => {}
+    }
+}
+
+fn submit_prompt(app: &mut GitYasApp, prompt: Prompt, text: String) {
+    let name = text.trim().to_owned();
+    match prompt {
+        Prompt::Branch => {
+            let n = name.clone();
+            app.bridge.run(
+                TASK_PROMPT,
+                move |engine| async move { engine.create_branch(n, None, true).await },
+                move |app, result| match result {
+                    Ok(_) => app.notify.success(format!("Created and switched to {name}")),
+                    Err(err) => app.report_error(&format!("Could not create branch {name}"), &err),
+                },
+            );
+        }
+    }
+}
+
 fn prompt_screen(ui: &mut Ui, app: &mut GitYasApp, prompt: Prompt) {
     let p = theme::pal(ui);
     title(ui, prompt.title());
     let repo = app.store.repo.as_ref();
     let detail = match prompt {
-        Prompt::Tag => repo
-            .and_then(|r| r.head_target())
-            .map(|id| format!("Lightweight tag on {}", id.short(7))),
         Prompt::Branch => repo
             .and_then(|r| r.head.as_ref())
             .map(|h| format!("From {} and switch to it", h.label())),
-        Prompt::Stash => repo.map(|r| {
-            let n = r.files.unstaged.len() + r.files.staged.len();
-            format!("{n} changed {} (untracked files included)", model::files_word(n))
-        }),
     };
     if let Some(detail) = detail {
         ui.label(RichText::new(detail).size(12.0).color(p.text_muted));
@@ -930,11 +1251,17 @@ fn prompt_screen(ui: &mut Ui, app: &mut GitYasApp, prompt: Prompt) {
     }
     let text = app.speed.prompt_text.clone();
     if let Some(problem) = prompt_problem(app, prompt, &text)
-        && (prompt == Prompt::Stash || !text.trim().is_empty())
+        && !text.trim().is_empty()
     {
         ui.label(RichText::new(problem).size(12.0).color(p.orange));
     }
+    working(ui, app);
+}
+
+/// "Working…" while a prompt / stash / tag command runs.
+fn working(ui: &mut Ui, app: &GitYasApp) {
     if app.bridge.is_running(TASK_PROMPT) {
+        let p = theme::pal(ui);
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new());
             ui.label(RichText::new("Working…").color(p.text_muted));
@@ -954,6 +1281,11 @@ pub fn on_event(app: &mut GitYasApp, event: &AppEvent) {
             app.speed.viewer = None;
             if app.speed.screen == Screen::Viewer {
                 app.speed.screen = Screen::Changes;
+            }
+            // The stash / tag picked for the actions screen belongs to the other repository.
+            if app.speed.target.take().is_some() && app.speed.screen == Screen::Actions {
+                app.speed.screen = Screen::Home;
+                app.speed.back.clear();
             }
         }
         _ => {}
@@ -1040,6 +1372,9 @@ pub fn frame(ui: &mut Ui, app: &mut GitYasApp, modal_open: bool) {
                     Screen::Commit => commit(ui, app),
                     Screen::Prompt(prompt) => prompt_screen(ui, app, prompt),
                     Screen::Branches => branches(ui, app),
+                    Screen::Stashes => stashes(ui, app),
+                    Screen::Tags => tags(ui, app),
+                    Screen::Actions => actions(ui, app),
                 });
         });
     app.speed.scroll_to_cursor = false;
@@ -1194,9 +1529,27 @@ fn hints(ui: &mut Ui, app: &GitYasApp, screen: Screen) -> f32 {
             ("Esc", "back"),
         ]),
         Screen::Commit => fixed(&[("Enter", "commit"), ("Ctrl+Enter", "commit & push"), ("Esc", "back")]),
-        Screen::Prompt(Prompt::Tag) => fixed(&[("Enter", "create"), ("Ctrl+Enter", "create & push"), ("Esc", "back")]),
         Screen::Prompt(Prompt::Branch) => fixed(&[("Enter", "create & switch"), ("Esc", "back")]),
-        Screen::Prompt(Prompt::Stash) => fixed(&[("Enter", "stash"), ("Esc", "back")]),
+        Screen::Stashes if app.speed.stashes == 0 => fixed(&[("↑↓", "move"), ("Enter", "stash all"), ("Esc", "back")]),
+        Screen::Stashes => fixed(&[
+            ("↑↓", "move"),
+            ("Enter", "actions"),
+            ("A", "apply"),
+            ("O", "pop"),
+            ("D", "delete"),
+            ("Esc", "back"),
+        ]),
+        Screen::Tags if app.speed.tags == 0 => {
+            fixed(&[("Enter", "create"), ("Ctrl+Enter", "create & push"), ("↓", "tags"), ("Esc", "back")])
+        }
+        Screen::Tags => fixed(&[
+            ("↑↓", "move"),
+            ("Enter", "actions"),
+            ("P", "push"),
+            ("D", "delete"),
+            ("Esc", "back"),
+        ]),
+        Screen::Actions => fixed(&[("↑↓", "move"), ("Enter", "run"), ("Esc", "back")]),
         Screen::Branches => {
             let mut v = fixed(&[("↑↓", "move"), ("Enter", "check out")]);
             v.push((key(Item::NewBranch), "new branch"));
@@ -1262,6 +1615,7 @@ fn home(ui: &mut Ui, app: &mut GitYasApp) {
     let changes = repo.map_or(0, |r| r.files.unstaged.len() + r.files.staged.len());
     let staged = repo.map_or(0, |r| r.files.staged.len());
     let stashes = repo.map_or(0, |r| r.stashes.len());
+    let tags = repo.map_or(0, |r| r.commits.tags.len());
     let mut run = None;
     egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -1271,7 +1625,8 @@ fn home(ui: &mut Ui, app: &mut GitYasApp) {
                 Item::Commit => (staged > 0).then(|| format!("{staged} staged")),
                 Item::Push => (ahead > 0).then(|| format!("↑{ahead}")),
                 Item::Pull => (behind > 0).then(|| format!("↓{behind}")),
-                Item::Pop => (stashes > 0).then(|| format!("{stashes}")),
+                Item::Stash => (stashes > 0).then(|| format!("{stashes}")),
+                Item::Tag => (tags > 0).then(|| format!("{tags}")),
                 _ => None,
             };
             let key = keys::label(keys::get(&app.store.settings.speed, Binding::Action(entry.item)));
@@ -1507,22 +1862,65 @@ fn commit(ui: &mut Ui, app: &mut GitYasApp) {
     });
 }
 
+/// A small caps section label above a group of rows ("LOCAL  3").
+fn section_label(ui: &mut Ui, text: &str, count: usize) {
+    let p = theme::pal(ui);
+    ui.add_space(4.0);
+    ui.label(RichText::new(format!("{text}  {count}")).size(11.0).strong().color(p.text_muted));
+}
+
+/// Paints a list row's content: a glyph, a truncated name and a right-aligned detail.
+fn paint_row(
+    painter: &egui::Painter,
+    rect: Rect,
+    glyph: (&str, egui::Color32),
+    name: (&str, egui::Color32),
+    detail: &str,
+    faint: egui::Color32,
+) {
+    painter.text(
+        Pos2::new(rect.left() + 6.0, rect.center().y),
+        Align2::CENTER_CENTER,
+        glyph.0,
+        FontId::proportional(13.0),
+        glyph.1,
+    );
+    let detail_rect = painter.text(rect.right_center(), Align2::RIGHT_CENTER, detail, FontId::proportional(11.5), faint);
+    ui::paint_truncated(
+        painter,
+        Pos2::new(rect.left() + 20.0, rect.center().y),
+        name.0,
+        FontId::proportional(13.0),
+        name.1,
+        (detail_rect.left() - rect.left() - 30.0).max(0.0),
+    );
+}
+
 fn branches(ui: &mut Ui, app: &mut GitYasApp) {
     let p = theme::pal(ui);
-    let Some(repo) = app.store.repo.as_ref() else { return };
-    let list = repo.local_branches.clone();
+    if app.store.repo.is_none() {
+        return;
+    }
+    let list = branch_rows(app);
     title(ui, "Switch branch");
     if list.is_empty() {
-        ui.label(RichText::new("No local branches yet.").color(p.text_muted));
+        ui.label(RichText::new("No branches yet.").color(p.text_muted));
         return;
     }
     app.speed.branches = app.speed.branches.min(list.len() - 1);
     let checking_out = app.bridge.is_running("checkout");
+    let locals = list.iter().filter(|b| b.kind == BranchKind::Local).count();
     let mut clicked = None;
     let mut checkout = false;
     egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         for (i, branch) in list.iter().enumerate() {
+            if i == 0 && locals > 0 {
+                section_label(ui, "LOCAL", locals);
+            }
+            if i == locals {
+                section_label(ui, "REMOTE", list.len() - locals);
+            }
             let mut detail = Vec::new();
             if branch.ahead > 0 {
                 detail.push(format!("↑{}", branch.ahead));
@@ -1533,34 +1931,17 @@ fn branches(ui: &mut Ui, app: &mut GitYasApp) {
             if let Some(upstream) = &branch.upstream {
                 detail.push(upstream.clone());
             }
+            let remote = branch.kind == BranchKind::Remote;
+            let glyph = if branch.is_head {
+                (icon::CHECK, p.green)
+            } else if remote {
+                (icon::CLOUD, p.text_faint)
+            } else {
+                (icon::GIT_BRANCH, p.text_muted)
+            };
+            let color = if branch.is_head { p.text } else { p.text_muted };
             let resp = list_row(ui, app.speed.branches == i, app.speed.scroll_to_cursor, |painter, rect| {
-                let (glyph, color) = if branch.is_head {
-                    (icon::CHECK, p.green)
-                } else {
-                    (icon::GIT_BRANCH, p.text_muted)
-                };
-                painter.text(
-                    Pos2::new(rect.left() + 6.0, rect.center().y),
-                    Align2::CENTER_CENTER,
-                    glyph,
-                    FontId::proportional(13.0),
-                    color,
-                );
-                let detail_rect = painter.text(
-                    rect.right_center(),
-                    Align2::RIGHT_CENTER,
-                    detail.join("  "),
-                    FontId::proportional(11.5),
-                    p.text_faint,
-                );
-                ui::paint_truncated(
-                    painter,
-                    Pos2::new(rect.left() + 20.0, rect.center().y),
-                    &branch.name,
-                    FontId::proportional(13.0),
-                    if branch.is_head { p.text } else { p.text_muted },
-                    (detail_rect.left() - rect.left() - 30.0).max(0.0),
-                );
+                paint_row(painter, rect, glyph, (&branch.name, color), &detail.join("  "), p.text_faint);
             });
             if resp.double_clicked() {
                 clicked = Some(i);
@@ -1581,6 +1962,216 @@ fn branches(ui: &mut Ui, app: &mut GitYasApp) {
         if checkout {
             branches_key(app, Key::Enter);
         }
+    }
+}
+
+fn stashes(ui: &mut Ui, app: &mut GitYasApp) {
+    let p = theme::pal(ui);
+    let Some(repo) = app.store.repo.as_ref() else { return };
+    let changed = repo.files.unstaged.len() + repo.files.staged.len();
+    let list = stash_rows(app);
+    title(ui, "Stashes");
+    app.speed.stashes = app.speed.stashes.min(list.len());
+    let busy = [TASK_PROMPT, worktree::TASK_STASH, worktree::TASK_POP]
+        .iter()
+        .any(|k| app.bridge.is_running(k));
+    let mut clicked = None;
+    let mut open = false;
+    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        // The button: one click (or Enter) stashes.
+        let resp = list_row(ui, app.speed.stashes == 0, app.speed.scroll_to_cursor, |painter, rect| {
+            let (color, detail) = if changed > 0 {
+                (p.text, format!("{changed} changed {}", model::files_word(changed)))
+            } else {
+                (p.text_muted, "Nothing to stash".to_owned())
+            };
+            paint_row(
+                painter,
+                rect,
+                (icon::TRAY_ARROW_DOWN, p.accent),
+                ("Stash all changes", color),
+                &detail,
+                p.text_faint,
+            );
+        });
+        let resp = resp.on_hover_text("Stashes every change, untracked files included");
+        if resp.clicked() {
+            clicked = Some(0);
+            open = true;
+        }
+        section_label(ui, "STASHES", list.len());
+        if list.is_empty() {
+            ui.label(RichText::new("No stashes yet.").size(12.0).color(p.text_faint));
+        }
+        for (i, stash) in list.iter().enumerate() {
+            let detail = format!("{} · {}", stash.revspec(), ui::format_relative(stash.time));
+            let resp = list_row(ui, app.speed.stashes == i + 1, app.speed.scroll_to_cursor, |painter, rect| {
+                paint_row(
+                    painter,
+                    rect,
+                    (icon::TRAY, p.text_muted),
+                    (&stash_title(stash), p.text),
+                    &detail,
+                    p.text_faint,
+                );
+            });
+            if resp.double_clicked() {
+                clicked = Some(i + 1);
+                open = true;
+            } else if resp.clicked() {
+                clicked = Some(i + 1);
+            }
+        }
+    });
+    if busy {
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new());
+            ui.label(RichText::new("Working…").color(p.text_muted));
+        });
+    }
+    if let Some(i) = clicked {
+        app.speed.stashes = i;
+        if open {
+            let ctx = ui.ctx().clone();
+            stashes_key(&ctx, app, Key::Enter);
+        }
+    }
+}
+
+fn tags(ui: &mut Ui, app: &mut GitYasApp) {
+    let p = theme::pal(ui);
+    let Some(repo) = app.store.repo.as_ref() else { return };
+    let head = repo.head_target().map(|id| id.short(7));
+    let list = tag_rows(app);
+    let commit_time = |id: &Oid| {
+        let repo = app.store.repo.as_ref()?;
+        repo.commit_index(id)
+            .and_then(|i| repo.commits.commits.get(i))
+            .map(|c| c.author_time)
+    };
+    let details: Vec<String> = list
+        .iter()
+        .map(|t| match commit_time(&t.target) {
+            Some(time) => format!("{} · {}", t.target.short(7), ui::format_relative(time)),
+            None => t.target.short(7),
+        })
+        .collect();
+    title(ui, "Tags");
+    if app.speed.tags > list.len() {
+        app.speed.tags = list.len();
+        if app.speed.tags == 0 {
+            app.speed.focus_tag = true;
+        }
+    }
+    if let Some(head) = head {
+        ui.label(
+            RichText::new(format!("New lightweight tag on HEAD ({head})"))
+                .size(12.0)
+                .color(p.text_muted),
+        );
+    }
+    ui.add_space(2.0);
+    let focus = std::mem::take(&mut app.speed.focus_tag);
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut app.speed.tag_text)
+            .id(egui::Id::new(TAG_ID))
+            .hint_text("New tag name, e.g. v1.0.0")
+            .desired_width(f32::INFINITY),
+    );
+    let on_field = app.speed.tags == 0;
+    // The field has the keys while the cursor is on it; nothing else may have taken the focus.
+    if focus || (on_field && !resp.has_focus() && ui.ctx().memory(|m| m.focused().is_none())) {
+        resp.request_focus();
+    }
+    if resp.clicked() || (resp.gained_focus() && !on_field) {
+        app.speed.tags = 0;
+    }
+    let text = app.speed.tag_text.clone();
+    if !text.trim().is_empty()
+        && let Some(problem) = tag_problem(app, &text)
+    {
+        ui.label(RichText::new(problem).size(12.0).color(p.orange));
+    }
+    working(ui, app);
+    let mut clicked = None;
+    let mut open = false;
+    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        section_label(ui, "TAGS", list.len());
+        if list.is_empty() {
+            ui.label(RichText::new("No tags yet.").size(12.0).color(p.text_faint));
+        }
+        for (i, (tag, detail)) in list.iter().zip(&details).enumerate() {
+            let glyph = if tag.is_annotated() { p.accent } else { p.text_muted };
+            let resp = list_row(ui, app.speed.tags == i + 1, app.speed.scroll_to_cursor, |painter, rect| {
+                paint_row(painter, rect, (icon::TAG, glyph), (&tag.name, p.text), detail, p.text_faint);
+            });
+            let resp = if tag.is_annotated() {
+                resp.on_hover_text(tag.message())
+            } else {
+                resp
+            };
+            if resp.double_clicked() {
+                clicked = Some(i + 1);
+                open = true;
+            } else if resp.clicked() {
+                clicked = Some(i + 1);
+            }
+        }
+    });
+    if let Some(i) = clicked {
+        let ctx = ui.ctx().clone();
+        release_text_focus(&ctx);
+        app.speed.tags = i;
+        if open {
+            tags_key(&ctx, app, Key::Enter);
+        }
+    }
+}
+
+fn actions(ui: &mut Ui, app: &mut GitYasApp) {
+    let p = theme::pal(ui);
+    let Some(target) = app.speed.target.clone() else {
+        app.speed.screen = Screen::Home;
+        return;
+    };
+    let (glyph, heading) = match &target {
+        Target::Stash { label, .. } => (icon::TRAY, label.clone()),
+        Target::Tag { name, .. } => (icon::TAG, name.clone()),
+    };
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(glyph).color(p.accent));
+        ui.add(egui::Label::new(RichText::new(heading).size(13.0).strong()).truncate());
+    });
+    ui.add_space(4.0);
+    let list = action_rows(app);
+    app.speed.actions = app.speed.actions.min(list.len().saturating_sub(1));
+    let mut run = None;
+    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for (i, action) in list.iter().enumerate() {
+            let color = if action.danger() { p.red } else { p.text };
+            let glyph_color = if action.danger() { p.red } else { p.accent };
+            let resp = list_row(ui, app.speed.actions == i, app.speed.scroll_to_cursor, |painter, rect| {
+                paint_row(
+                    painter,
+                    rect,
+                    (action.glyph(), glyph_color),
+                    (&action.label(), color),
+                    "",
+                    p.text_faint,
+                );
+            });
+            if resp.clicked() {
+                app.speed.actions = i;
+                run = Some(action.clone());
+            }
+        }
+    });
+    if let Some(action) = run {
+        let ctx = ui.ctx().clone();
+        run_action(&ctx, app, action);
     }
 }
 
@@ -1671,7 +2262,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_and_branch_prompts_stay_inside_the_panel() {
+    fn tags_screen_creates_tags_and_lists_them() {
         let mut t = TestApp::engine();
         let (dir, repo) = temp_repo();
         t.add_and_open(dir.path());
@@ -1680,21 +2271,34 @@ mod tests {
         t.harness.step();
 
         press(&mut t, Key::T);
-        assert_eq!(t.app().speed.screen(), Screen::Prompt(Prompt::Tag));
+        assert_eq!(t.app().speed.screen(), Screen::Tags);
         t.harness.step();
         assert!(t.harness.query_by_label("Create tag").is_none(), "no main-window dialog");
         t.harness.step();
         t.harness
-            .get_by(|n| n.placeholder() == Some("Tag name, e.g. v1.0.0"))
+            .get_by(|n| n.placeholder() == Some("New tag name, e.g. v1.0.0"))
             .type_text("v1.0");
         t.harness.step();
         press(&mut t, Key::Enter);
         t.settle_until("tag created", |app| {
             app.store.repo.as_ref().is_some_and(|r| r.commits.tag("v1.0").is_some())
         });
-        // The refresh can land a frame before the tag command's completion, and a prompt ignores Enter while the
-        // previous one is still running.
         t.settle();
+        // The screen stays, with the field cleared and the new tag listed.
+        assert_eq!(t.app().speed.screen(), Screen::Tags);
+        assert!(t.app().speed.tag_text.is_empty());
+        assert_eq!(tag_rows(t.app()).iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["v1.0"]);
+        // ↓ moves from the field to the list, Enter opens the tag's actions.
+        press(&mut t, Key::ArrowDown);
+        assert_eq!(t.app().speed.tags, 1);
+        press(&mut t, Key::Enter);
+        assert_eq!(t.app().speed.screen(), Screen::Actions);
+        assert!(action_rows(t.app()).contains(&Action::DeleteTag));
+        press(&mut t, Key::Escape);
+        assert_eq!(t.app().speed.screen(), Screen::Tags);
+        press(&mut t, Key::ArrowUp);
+        assert_eq!(t.app().speed.tags, 0, "back on the field");
+        press(&mut t, Key::Escape);
         assert_eq!(t.app().speed.screen(), Screen::Home);
 
         press(&mut t, Key::N);
@@ -1751,6 +2355,65 @@ mod tests {
             t.app().notify.tick(0.1, None);
         }
         assert_eq!(t.app().notify.toasts().count(), 0, "even the error is gone after 6 s in speed mode");
+    }
+
+    #[test]
+    fn stashes_screen_stashes_and_lists_the_stashes() {
+        let mut t = TestApp::engine();
+        let (dir, repo) = temp_repo();
+        t.add_and_open(dir.path());
+        write_file(&repo, "a.txt", "a\n");
+        let engine = t.app().bridge.engine().clone();
+        t.block_on(engine.update_commit_signature(gityas_core::models::CommitSignature::new("Ada Lovelace", "ada@example.com")))
+            .unwrap();
+        t.block_on(engine.refresh(gityas_engine::Refresh::FILES)).unwrap();
+        t.settle_until("a change", |app| app.store.repo.as_ref().is_some_and(|r| r.has_wip()));
+        let ctx = t.harness.ctx.clone();
+        summon(&ctx, t.app());
+        t.harness.step();
+
+        press(&mut t, Key::S);
+        assert_eq!(t.app().speed.screen(), Screen::Stashes);
+        // Enter on "Stash all changes".
+        press(&mut t, Key::Enter);
+        t.settle_until("stashed", |app| {
+            app.store.repo.as_ref().is_some_and(|r| r.stashes.len() == 1 && !r.has_wip())
+        });
+        t.settle();
+        press(&mut t, Key::ArrowDown);
+        assert_eq!(current_stash(t.app()).map(|s| s.index), Some(0));
+        press(&mut t, Key::Enter);
+        assert_eq!(t.app().speed.screen(), Screen::Actions);
+        assert_eq!(
+            action_rows(t.app()),
+            vec![Action::ApplyStash, Action::PopStash, Action::DeleteStash]
+        );
+        // Pop: back on the list, the stash applied and gone.
+        press(&mut t, Key::ArrowDown);
+        press(&mut t, Key::Enter);
+        assert_eq!(t.app().speed.screen(), Screen::Stashes);
+        t.settle_until("popped", |app| {
+            app.store.repo.as_ref().is_some_and(|r| r.stashes.is_empty() && r.has_wip())
+        });
+    }
+
+    #[test]
+    fn switch_branch_lists_remote_branches_after_the_local_ones() {
+        let mut t = TestApp::mock();
+        let rows = branch_rows(t.app());
+        let first_remote = rows.iter().position(|b| b.kind == BranchKind::Remote);
+        assert!(first_remote.is_some(), "the mock has remote branches");
+        assert!(
+            rows[first_remote.unwrap_or_default()..]
+                .iter()
+                .all(|b| b.kind == BranchKind::Remote && !b.name.ends_with("/HEAD"))
+        );
+        let ctx = t.harness.ctx.clone();
+        summon(&ctx, t.app());
+        t.harness.step();
+        press(&mut t, Key::B);
+        t.harness.step();
+        t.harness.get_by_label_contains("REMOTE");
     }
 
     #[test]
@@ -1841,6 +2504,14 @@ mod tests {
         }
         t.snapshot("speed_commit");
         press(&mut t, Key::Escape);
+        for (key, name) in [(Key::B, "speed_branches"), (Key::S, "speed_stashes"), (Key::T, "speed_tags")] {
+            press(&mut t, key);
+            for _ in 0..3 {
+                t.harness.step();
+            }
+            t.snapshot(name);
+            press(&mut t, Key::Escape);
+        }
         press(&mut t, Key::Escape);
         assert!(t.app().speed.collapsed());
         for _ in 0..5 {

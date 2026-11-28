@@ -165,8 +165,9 @@ pub struct SpeedSettings {
     pub fetch: String,
     pub branches: String,
     pub new_branch: String,
+    /// Opens the stash list (stash all changes, apply / pop / delete a stash).
     pub stash: String,
-    pub pop: String,
+    /// Opens the tag list (create a tag on HEAD, push / delete a tag).
     pub tag: String,
     pub exit: String,
 }
@@ -184,7 +185,6 @@ impl Default for SpeedSettings {
             branches: "B".into(),
             new_branch: "N".into(),
             stash: "S".into(),
-            pop: "O".into(),
             tag: "T".into(),
             exit: "X".into(),
         }
@@ -209,6 +209,8 @@ pub struct Settings {
     pub speed: SpeedSettings,
     /// The folder the add-repository dialog's folder pickers last chose (`None` = start at the home folder).
     pub last_folder: Option<String>,
+    /// The Changes panel on the right and the Branches panel on the left (instead of the other way round).
+    pub swap_sidebars: bool,
 }
 
 impl Default for Settings {
@@ -223,6 +225,7 @@ impl Default for Settings {
             fetch_interval_secs: DEFAULT_FETCH_INTERVAL_SECS,
             speed: SpeedSettings::default(),
             last_folder: None,
+            swap_sidebars: false,
         }
     }
 }
@@ -307,6 +310,7 @@ mod tests {
                 ..SpeedSettings::default()
             },
             last_folder: Some("/home/ada/src".into()),
+            swap_sidebars: true,
         });
         for position in RailPosition::ALL {
             round_trip(&position);
@@ -339,6 +343,7 @@ mod tests {
         assert_eq!(settings.fetch_interval_secs, DEFAULT_FETCH_INTERVAL_SECS);
         assert_eq!(settings.rail_position, RailPosition::Left);
         assert_eq!(settings.speed, SpeedSettings::default());
+        assert!(!settings.swap_sidebars);
         let speed: SpeedSettings = serde_json::from_str(r#"{"push":"Shift+P"}"#)?;
         assert_eq!((speed.push.as_str(), speed.pull.as_str()), ("Shift+P", "L"));
         Ok(())

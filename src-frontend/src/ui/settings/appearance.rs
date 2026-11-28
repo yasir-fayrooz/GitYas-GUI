@@ -1,4 +1,4 @@
-//! Appearance page: theme, icon bar position, default diff view, graph options, zoom.
+//! Appearance page: theme, panel layout, default diff view, graph options, zoom.
 //!
 //! Each change goes through `GitYasApp::modify_settings` (an atomic read-modify-write in the engine, so two quick
 //! changes, or a change racing a signature save, never overwrite each other); its completion copies the saved
@@ -27,6 +27,7 @@ pub enum Change {
     MaxCommits(usize),
     /// Seconds; the Git page's background fetch interval (saved like the appearance settings).
     FetchInterval(u64),
+    SwapSidebars(bool),
 }
 
 /// Range of "Max commits shown".
@@ -42,6 +43,7 @@ impl Change {
             Change::ShowStashes(on) => settings.graph.show_stashes = on,
             Change::MaxCommits(max) => settings.graph.max_commits = max,
             Change::FetchInterval(secs) => settings.fetch_interval_secs = secs,
+            Change::SwapSidebars(on) => settings.swap_sidebars = on,
         }
     }
 }
@@ -91,6 +93,16 @@ pub(super) fn page(ui: &mut Ui, app: &mut GitYasApp) {
                 .small()
                 .color(p.text_muted),
         );
+    }
+
+    section(ui, "Layout");
+    let mut swap = settings.swap_sidebars;
+    if ui
+        .checkbox(&mut swap, "Swap the Changes and Branches panels")
+        .on_hover_text("Changes on the right, Branches on the left")
+        .changed()
+    {
+        change = Some(Change::SwapSidebars(swap));
     }
 
     section(ui, "Diff viewer");

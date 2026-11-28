@@ -16,7 +16,7 @@
 //!   fetch/push/merge)
 //! * History and working tree: [`commits`], [`status`], [`worktree`], [`cache`], [`refscan`] (one read of every
 //!   ref, reused between refreshes); linked worktrees: [`worktrees`]
-//! * Diffs and merges: [`diff`], [`merge`]
+//! * Diffs and merges: [`diff`], [`merge`]; one file's history and blame: [`history`]
 //! * Shared: [`convert`] (oid conversions, `hunk_content_hash` used by both diffs and hunk staging)
 
 pub mod branches;
@@ -26,6 +26,7 @@ pub mod config;
 pub mod convert;
 pub mod diff;
 pub mod gitoxide;
+pub mod history;
 pub mod merge;
 pub mod refs;
 pub mod refscan;

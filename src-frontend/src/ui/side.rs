@@ -1,5 +1,6 @@
 //! Side panels (shared): the Changes panel pinned on the left (working-tree changes and the commit box, or the
-//! selected commit / stash's details), the Branches panel pinned on the right, and the drawer that slides out on the
+//! selected commit / stash's details), the Branches panel pinned on the right (the two swap sides with
+//! `Settings::swap_sidebars`), and the drawer that slides out on the
 //! far right for the Settings page (opened from the context bar). What each page draws belongs to the screen modules
 //! (`worktree`, `history`, `settings`).
 //!
@@ -32,9 +33,9 @@ impl SidePage {
 pub fn on_event(app: &mut GitYasApp, event: &AppEvent) {
     if let AppEvent::GitFilesChanged { repo, files } = event {
         let changed = app.layout.files_changed(repo, files);
-        let in_merge = app.tab().is_some_and(|t| matches!(t.center, Center::Merge(_)));
+        let full_screen = app.tab().is_some_and(|t| t.center.is_full_screen());
         if changed
-            && !in_merge
+            && !full_screen
             && app.store.active.as_ref() == Some(repo)
             && let Some(tab) = app.tab_mut()
         {
@@ -115,14 +116,14 @@ fn drawer(ui: &mut Ui, app: &mut GitYasApp) {
     }
 }
 
-/// The Branches panel, pinned on the right (inside the drawer).
+/// The Branches panel, pinned on the right (inside the drawer), or on the left when the panels are swapped.
 fn branches(ui: &mut Ui, app: &mut GitYasApp) {
     let p = theme::pal(ui);
     let page = SidePage::Branches;
     let mut expanded = app.layout.showing(page) && app.store.repo.is_some();
     let (default, range) = page.size();
     restore_width(ui.ctx(), page);
-    egui::Panel::right(drawer_id(page))
+    side_panel(page, app.store.settings.swap_sidebars)
         .resizable(true)
         .drag_to_open(false)
         .default_size(default)
@@ -135,14 +136,14 @@ fn branches(ui: &mut Ui, app: &mut GitYasApp) {
     remember_width(ui.ctx(), page);
 }
 
-/// The Changes panel, pinned on the left.
+/// The Changes panel, pinned on the left, or on the right (inside the Branches panel's place) when swapped.
 fn changes(ui: &mut Ui, app: &mut GitYasApp) {
     let p = theme::pal(ui);
     let page = SidePage::Changes;
     let mut expanded = app.layout.showing(page) && app.store.repo.is_some();
     let (default, range) = page.size();
     restore_width(ui.ctx(), page);
-    let shown = egui::Panel::left(drawer_id(page))
+    let shown = side_panel(page, !app.store.settings.swap_sidebars)
         .resizable(true)
         .drag_to_open(false)
         .default_size(default)
@@ -164,6 +165,16 @@ fn changes(ui: &mut Ui, app: &mut GitYasApp) {
     remember_width(ui.ctx(), page);
     // `expanded` comes back false when the edge is dragged below the minimum width or double-clicked; that is
     // ignored, so resizing stops at the minimum.
+}
+
+/// The panel of `page`, on the left when `left` (Appearance → "Swap the Changes and Branches panels" flips the two
+/// pinned panels).
+fn side_panel(page: SidePage, left: bool) -> egui::Panel {
+    if left {
+        egui::Panel::left(drawer_id(page))
+    } else {
+        egui::Panel::right(drawer_id(page))
+    }
 }
 
 fn changes_rect_id() -> egui::Id {

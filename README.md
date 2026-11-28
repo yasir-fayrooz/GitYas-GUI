@@ -132,12 +132,16 @@ One line each here. Release notes for every version are in the [changelog](CHANG
 - Hunk, inline and side-by-side views with syntax highlighting
 - Word-level highlights inside changed lines
 - Select diff text and copy it with or without the added or removed lines
+- A file's history (renames followed) and blame in a full-screen view, with every version pinned on the left
 
 ### Speed mode
 
 - A compact, always-on-top panel for the keyboard in the corner of your screen
 - A global shortcut (<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, <kbd>⌥</kbd><kbd>⇧</kbd><kbd>G</kbd> on a Mac) summons it from any app and hands the focus back afterwards
-- One key per action: changes, commit, push, pull, fetch, switch branch, new branch, stash, pop, tag
+- One key per action: changes, commit, push, pull, fetch, switch branch (local and remote), new branch, stashes,
+  tags
+- Stash all changes, then apply, pop or delete a stash; create a tag (and push it) from a field, then push, check
+  out or delete a tag
 - Stage, unstage and discard from the list, view a file's diff, commit or commit and push
 - The shortcut and every key can be changed in Settings → Git
 

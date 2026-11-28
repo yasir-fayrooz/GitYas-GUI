@@ -36,6 +36,7 @@ use gityas_auth::CredentialStore;
 use gityas_core::{EventSink, Oid};
 use gityas_storage::Storage;
 
+pub use git::FILE_HISTORY_MAX;
 pub use gityas_auth::ProviderHelp;
 pub use profiles::{CarryOver, DEFAULT_PROFILE_ID, MAX_PROFILE_NAME, Profile, ProfileStore, Profiles, clean_name};
 pub use refresh::Refresh;

@@ -4,10 +4,13 @@
 //! * [`word_diff`]: in-house intra-line highlights, computed off the UI thread when a diff loads (with the
 //!   [`DiffSyntax`] highlights of both sides, see [`crate::syntax`]).
 //! * [`rows`]: reusable painter primitives (gutters, virtualised monospace rows, horizontal offset).
+//! * [`file_tools`]: the full-screen file history view (the header's History / Blame buttons), which shows its
+//!   selected commit's diff with this viewer.
 //! * this file: per-tab state ([`DiffTab`]), data flow (fetch on request change, re-fetch on `GitFilesChanged`
 //!   for working-tree targets), header, guards, hunk / file actions, keyboard.
 
 pub(crate) mod diff_model;
+pub(crate) mod file_tools;
 pub(crate) mod rows;
 pub(crate) mod word_diff;
 
@@ -21,6 +24,7 @@ use gityas_core::models::{Delta, DiffViewMode};
 use gityas_core::{AppEvent, GitYasError, RepoId};
 
 use self::diff_model::{CellKind, Folding, Row, RowKind, Rows, SplitRow, TextRef};
+use self::file_tools::Pane;
 use self::rows::{LineSpec, Metrics};
 use self::word_diff::IntraLine;
 use crate::app::{Center, DiffRequest, GitYasApp};
@@ -368,6 +372,10 @@ pub fn on_event(app: &mut GitYasApp, event: &AppEvent) {
     if app.store.active.as_ref() != Some(repo) {
         return;
     }
+    if app.tab().is_some_and(|t| matches!(t.center, Center::File(_))) {
+        file_tools::on_files_changed(app, files);
+        return;
+    }
     let Some(tab) = app.tab_mut() else { return };
     let Center::Diff(request) = &tab.center else { return };
     let DiffTarget::WorkingTree { staged } = request.target else {
@@ -402,6 +410,11 @@ pub fn on_event(app: &mut GitYasApp, event: &AppEvent) {
             fetch(app, request);
         }
     }
+}
+
+/// Loads `request` again (the file changed on disk); the current diff stays visible until the result arrives.
+pub(crate) fn refetch(app: &mut GitYasApp, request: DiffRequest) {
+    fetch(app, request);
 }
 
 /// Starts loading `request` into the active tab (the current diff stays visible until the result arrives).
@@ -468,6 +481,8 @@ fn loaded(app: &mut GitYasApp, repo: &RepoId, generation: u64, result: gityas_co
 enum Act {
     Close,
     Mode(DiffViewMode),
+    /// Open the file history view on this pane.
+    Pane(Pane),
     StageFile,
     UnstageFile,
     StageHunk(HunkRef),
@@ -548,7 +563,7 @@ fn hunk_command(app: &mut GitYasApp, request: &DiffRequest, hunk: HunkRef, op: H
             if let Err(err) = result {
                 app.report_error(op.failure(), &err);
                 if err == GitYasError::StaleHunk {
-                    let still_shown = app.tab().is_some_and(|t| t.center == Center::Diff(request.clone()));
+                    let still_shown = file_tools::shows_diff(app, &request);
                     if still_shown {
                         fetch(app, request);
                     }
@@ -601,6 +616,7 @@ fn apply(app: &mut GitYasApp, ctx: &egui::Context, request: &DiffRequest, act: A
     match act {
         Act::Close => close(app),
         Act::Mode(mode) => persist_mode(app, mode),
+        Act::Pane(pane) => file_tools::open(app, request.clone(), pane),
         Act::StageFile => file_command(app, request, true),
         Act::UnstageFile => file_command(app, request, false),
         Act::StageHunk(h) => hunk_command(app, request, h, HunkOp::Stage),
@@ -856,6 +872,15 @@ fn selection_text(d: &DiffTab, mode: CopyMode) -> Option<String> {
 
 /// Centre area while a diff is open.
 pub fn view(ui: &mut Ui, app: &mut GitYasApp, request: &DiffRequest) {
+    show(ui, app, request, false);
+}
+
+/// The diff inside the file history view: no close or history buttons, and Esc is the view's.
+pub(crate) fn view_embedded(ui: &mut Ui, app: &mut GitYasApp, request: &DiffRequest) {
+    show(ui, app, request, true);
+}
+
+fn show(ui: &mut Ui, app: &mut GitYasApp, request: &DiffRequest, embedded: bool) {
     let Some(repo) = app.store.active.clone() else { return };
     let needs_fetch = {
         let tab = app.tabs.entry(repo.clone()).or_default();
@@ -883,7 +908,7 @@ pub fn view(ui: &mut Ui, app: &mut GitYasApp, request: &DiffRequest) {
             let Some(tab) = app.tabs.get_mut(&repo) else { return };
             let d = &mut tab.diff;
             let mode = d.effective_mode(settings_mode);
-            header(ui, p, request, d, mode, busy_file, &mut acts);
+            header(ui, p, request, d, mode, busy_file, embedded, &mut acts);
             body(ui, p, request, d, mode, busy_hunk, &mut acts);
         });
 
@@ -900,7 +925,7 @@ pub fn view(ui: &mut Ui, app: &mut GitYasApp, request: &DiffRequest) {
             if i.consume_key(egui::Modifiers::NONE, egui::Key::K) {
                 acts.push(Act::JumpHunk { forward: false });
             }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+            if !embedded && i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
                 acts.push(Act::Close);
             }
             if i.consume_key(egui::Modifiers::COMMAND, egui::Key::A) {
@@ -918,7 +943,17 @@ pub fn view(ui: &mut Ui, app: &mut GitYasApp, request: &DiffRequest) {
     }
 }
 
-fn header(ui: &mut Ui, p: &Palette, request: &DiffRequest, d: &DiffTab, mode: DiffViewMode, busy_file: bool, acts: &mut Vec<Act>) {
+#[allow(clippy::too_many_arguments)]
+fn header(
+    ui: &mut Ui,
+    p: &Palette,
+    request: &DiffRequest,
+    d: &DiffTab,
+    mode: DiffViewMode,
+    busy_file: bool,
+    embedded: bool,
+    acts: &mut Vec<Act>,
+) {
     let file = &request.file;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), HEADER_HEIGHT), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, p.bg_toolbar);
@@ -933,7 +968,7 @@ fn header(ui: &mut Ui, p: &Palette, request: &DiffRequest, d: &DiffTab, mode: Di
 
             // Controls first (right to left), so the path gets only the width that is left.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if crate::ui::icon_button(ui, icon::X, "Close (Esc)").clicked() {
+                if !embedded && crate::ui::icon_button(ui, icon::X, "Close (Esc)").clicked() {
                     acts.push(Act::Close);
                 }
                 if let DiffTarget::WorkingTree { staged } = request.target
@@ -972,6 +1007,10 @@ fn header(ui: &mut Ui, p: &Palette, request: &DiffRequest, d: &DiffTab, mode: Di
                 }
                 if d.loading && d.loaded.is_some() {
                     ui.add(egui::Spinner::new().size(12.0));
+                }
+                if !embedded {
+                    ui.add_space(8.0);
+                    history_buttons(ui, acts);
                 }
                 ui.add_space(8.0);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| path_label(ui, p, file));
@@ -1055,6 +1094,32 @@ fn mode_toggle(ui: &mut Ui, d: &DiffTab, mode: DiffViewMode, acts: &mut Vec<Act>
             }
         }
     });
+}
+
+/// History and Blame: open the full-screen file history view.
+fn history_buttons(ui: &mut Ui, acts: &mut Vec<Act>) {
+    // Right-to-left layout: add in reverse.
+    let buttons = [
+        (
+            Pane::Blame,
+            icon::USER_LIST,
+            "Blame",
+            "Who last changed each line, version by version",
+        ),
+        (
+            Pane::History,
+            icon::CLOCK_COUNTER_CLOCKWISE,
+            "History",
+            "Every commit that changed this file",
+        ),
+    ];
+    for (pane, glyph, label, tip) in buttons {
+        let resp = ui.add(egui::Button::new(format!("{glyph} {label}"))).on_hover_text(tip);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        if resp.clicked() {
+            acts.push(Act::Pane(pane));
+        }
+    }
 }
 
 /// Centred explanation panel (guards, empty state, errors).

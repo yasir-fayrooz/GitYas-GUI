@@ -669,3 +669,190 @@ fn snapshot_diff_viewer_modes_and_guard() {
     t.harness.step();
     t.snapshot("diff_binary_guard");
 }
+
+/// The file history view on the mock app: its History pane (the staged change selected) and its Blame pane.
+#[test]
+#[ignore = "needs a GPU"]
+fn snapshot_file_history_and_blame() {
+    use gityas_core::models::{BlameHunk, Commit, FileBlame, FileHistoryEntry};
+    const NEWEST: i64 = 1_792_320_120;
+    let mut t = TestApp::mock_gpu();
+    t.harness.step();
+    let path = "src/example-worker/test/tsconfig.json";
+    let request = DiffRequest {
+        target: DiffTarget::WorkingTree { staged: true },
+        file: Delta::new(path, DeltaChange::Modified),
+    };
+    inject(&mut t, request.clone(), sample_diff());
+    let commit = |key: &str, summary: &str, (name, email): (&str, &str), age_hours: i64| Commit {
+        id: crate::mock::oid(key),
+        parents: Vec::new(),
+        author_name: name.into(),
+        author_email: email.into(),
+        author_time: NEWEST - age_hours * 3600,
+        committer_time: NEWEST - age_hours * 3600,
+        summary: summary.into(),
+        description: String::new(),
+        lossy: false,
+    };
+    let john = ("John Smith", "john.smith@example.com");
+    let alex = ("Alex Chen", "alex@example.com");
+    let commits = [
+        commit("fix-store", "fix: exclude generated files from the worker tests", alex, 23),
+        commit("scaffold", "feat: scaffold egui app", john, 36),
+        commit("providers", "feat: bitbucket, ado, gitlab support", john, 187),
+        commit("tags-feature", "chore: vitest config for the example worker", alex, 255),
+        commit("ctx-menu", "feat: example worker", john, 446),
+    ];
+    let entries = commits
+        .iter()
+        .enumerate()
+        .map(|(i, c)| FileHistoryEntry {
+            commit: c.clone(),
+            file: Delta::new(
+                path,
+                if i + 1 == commits.len() {
+                    DeltaChange::Added
+                } else {
+                    DeltaChange::Modified
+                },
+            ),
+        })
+        .collect::<Vec<_>>();
+    let text = sample_diff().new_text.to_string();
+    let hunk = |c: Option<&Commit>, start: usize, lines: usize| match c {
+        Some(c) => BlameHunk {
+            commit: Some(c.id.clone()),
+            author_name: c.author_name.clone(),
+            author_time: c.author_time,
+            summary: c.summary.clone(),
+            path: path.into(),
+            start,
+            lines,
+        },
+        None => BlameHunk {
+            commit: None,
+            author_name: "Not committed yet".into(),
+            author_time: 0,
+            summary: String::new(),
+            path: path.into(),
+            start,
+            lines,
+        },
+    };
+    let blame = FileBlame {
+        text,
+        lossy: false,
+        hunks: vec![
+            hunk(Some(&commits[4]), 0, 3),
+            hunk(None, 3, 1),
+            hunk(Some(&commits[3]), 4, 1),
+            hunk(Some(&commits[0]), 5, 2),
+            hunk(Some(&commits[4]), 7, 1),
+        ],
+    };
+
+    file_tools::open(t.app(), request.clone(), file_tools::Pane::History);
+    file_tools::inject(t.app(), entries.clone(), None);
+    for _ in 0..3 {
+        t.harness.step();
+    }
+    t.snapshot("file_history");
+
+    file_tools::open(t.app(), request, file_tools::Pane::Blame);
+    file_tools::inject(t.app(), entries, Some(blame));
+    for _ in 0..3 {
+        t.harness.step();
+    }
+    t.snapshot("file_blame");
+}
+
+fn tools(t: &mut TestApp) -> &file_tools::FileTools {
+    &t.app().tab().unwrap().file
+}
+
+fn oid(id: git2::Oid) -> gityas_core::Oid {
+    gityas_core::Oid::from_hex(&id.to_string()).unwrap_or_else(|e| panic!("{e}"))
+}
+
+fn selected_target(t: &mut TestApp) -> Option<DiffTarget> {
+    tools(t).selected.as_ref().map(|r| r.target.clone())
+}
+
+#[test]
+fn file_history_opens_full_screen_with_its_commits_pinned_on_the_left() {
+    use crate::app::{Center, SidePage};
+    let mut t = TestApp::engine();
+    let (dir, repo, _, _) = two_hunk_repo(&mut t);
+    let newest = commit_all(&repo, "edit f");
+    write_file(
+        &repo,
+        "f.txt",
+        &file_text(dir.path(), "f.txt").replace(
+            "line 10
+", "LINE 10
+",
+        ),
+    );
+    refresh(&mut t);
+    t.settle();
+    let origin = unstaged("f.txt", DeltaChange::Modified);
+    open_and_load(&mut t, origin.clone());
+
+    // History: full screen (no side panels), the uncommitted version first and selected, then both commits.
+    t.harness.get_by_label("History").click();
+    t.harness.step();
+    assert!(matches!(t.app().tab().map(|t| &t.center), Some(Center::File(o)) if *o == origin));
+    t.settle_until("history loaded", |app| !app.bridge.is_running(file_tools::TASK_HISTORY));
+    t.harness.step();
+    assert!(!t.app().layout.showing(SidePage::Changes) && !t.app().layout.showing(SidePage::Branches));
+    t.harness.get_by_label("Uncommitted changes");
+    t.harness.get_by_label("edit f");
+    t.harness.get_by_label("2 commits");
+    assert_eq!(selected_target(&mut t), Some(origin.target.clone()));
+
+    // Down selects the newest commit; its diff is shown on the right.
+    t.harness.key_press(egui::Key::ArrowDown);
+    t.harness.step();
+    assert_eq!(selected_target(&mut t), Some(DiffTarget::Commit(oid(newest))));
+    t.settle_until("commit diff loaded", |app| {
+        app.tab().is_some_and(|tab| {
+            !tab.diff.loading
+                && tab
+                    .diff
+                    .request
+                    .as_ref()
+                    .is_some_and(|r| r.target == DiffTarget::Commit(oid(newest)))
+        })
+    });
+
+    // Blame of the selected commit; the list stays.
+    t.harness.get_by_label("Blame").click();
+    t.harness.step();
+    assert_eq!(tools(&mut t).pane, Pane::Blame);
+    t.settle_until("blame loaded", |app| !app.bridge.is_running(file_tools::TASK_BLAME));
+    t.harness.step();
+    t.harness.get_by_label_contains("As of");
+    t.harness.get_by_label("Uncommitted changes");
+
+    // Esc (or ✕) goes back to the diff it was opened from, with the side panels.
+    t.harness.key_press(egui::Key::Escape);
+    t.harness.step();
+    t.harness.step();
+    assert!(matches!(t.app().tab().map(|t| &t.center), Some(Center::Diff(o)) if *o == origin));
+    assert!(t.app().layout.showing(SidePage::Changes));
+
+    // A deleted file: Blame picks the last commit that has it.
+    std::fs::remove_file(dir.path().join("f.txt")).unwrap();
+    refresh(&mut t);
+    t.settle();
+    open_and_load(&mut t, unstaged("f.txt", DeltaChange::Deleted));
+    t.harness.get_by_label("Blame").click();
+    t.harness.step();
+    t.settle_until("history loaded", |app| !app.bridge.is_running(file_tools::TASK_HISTORY));
+    t.harness.step();
+    assert_eq!(selected_target(&mut t), Some(DiffTarget::Commit(oid(newest))));
+    t.harness.get_by_label("Close file history").click();
+    t.harness.step();
+    assert!(matches!(t.app().tab().map(|t| &t.center), Some(Center::Diff(_))));
+}

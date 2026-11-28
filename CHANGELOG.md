@@ -14,6 +14,22 @@ How to write it:
 
 ## [Unreleased]
 
+### Added
+
+- **File history and blame.** The file viewer's new **History** and **Blame** buttons open the file's history full
+  screen, like the merge editor: every commit that changed the file (renames followed) is pinned on the left, and
+  the right shows the selected commit's changes or who last changed each line as of that version. Use ↑ / ↓ to move
+  through the versions; ✕ or Esc goes back to the diff.
+- **Settings → Appearance → Swap the Changes and Branches panels** puts the Changes panel on the right and the
+  Branches panel on the left.
+- Speed mode's **Switch branch** also lists remote branches; checking one out creates or updates its local branch.
+
+### Changed
+
+- Speed mode: **S** opens your stashes (stash all changes at the top, then apply, pop or delete a stash) and **T**
+  opens your tags (type a name at the top to create one, Ctrl+Enter to also push it, then push, check out, copy or
+  delete a tag). The separate "Pop latest stash" key is gone.
+
 ## [1.1.1] - 2026-11-26
 
 ### Changed

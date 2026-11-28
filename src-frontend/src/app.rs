@@ -59,6 +59,15 @@ pub enum Center {
     Diff(DiffRequest),
     /// Merge-conflict editor for this repository-relative path.
     Merge(PathBuf),
+    /// Full-screen history / blame of the file of this diff (the one it was opened from; ✕ / Esc returns to it).
+    File(DiffRequest),
+}
+
+impl Center {
+    /// Views that take the whole window: the side panels are hidden while they are shown.
+    pub fn is_full_screen(&self) -> bool {
+        matches!(self, Center::Merge(_) | Center::File(_))
+    }
 }
 
 /// UI-only state of one repository tab (D2: data is re-fetched on switch; this is what survives it).
@@ -69,6 +78,7 @@ pub struct TabState {
     pub history: ui::history::HistoryTab,
     pub worktree: ui::worktree::WorktreeTab,
     pub diff: ui::diff::DiffTab,
+    pub file: ui::diff::file_tools::FileTools,
     pub merge: ui::merge::MergeTab,
 }
 
@@ -132,10 +142,11 @@ impl SettingsSaves {
 }
 
 impl LayoutState {
-    /// Hides the pinned panels while the merge editor is the centre view (it needs the width) and brings them back
-    /// once the editor is left (saved, closed, resolved elsewhere, another repository tab). The drawer is untouched.
-    pub fn follow_center(&mut self, in_merge: bool) {
-        self.show_changes = !in_merge;
+    /// Hides the pinned panels while a full-screen view (the merge editor, file history) is the centre view and
+    /// brings them back once it is left (closed, saved, resolved elsewhere, another repository tab). The drawer is
+    /// untouched.
+    pub fn follow_center(&mut self, full_screen: bool) {
+        self.show_changes = !full_screen;
     }
 
     /// Shows `page`: opens the drawer on it (Changes and Branches are always shown, except in the merge editor).
@@ -368,6 +379,7 @@ impl GitYasApp {
         s.graph = saved.graph.clone();
         s.fetch_interval_secs = saved.fetch_interval_secs;
         s.speed = saved.speed.clone();
+        s.swap_sidebars = saved.swap_sidebars;
         self.store.set_settings(s);
     }
 
@@ -488,8 +500,8 @@ impl GitYasApp {
         if !self.store.started || self.store.fatal.is_some() {
             ui::loading_frame(ui, self);
         } else {
-            let in_merge = self.tab().is_some_and(|t| matches!(t.center, Center::Merge(_)));
-            self.layout.follow_center(in_merge);
+            let full_screen = self.tab().is_some_and(|t| t.center.is_full_screen());
+            self.layout.follow_center(full_screen);
             ui::settings::sync(ui.ctx(), self);
             ui::side::panels(ui, self);
             center = ui.available_rect_before_wrap();
@@ -500,6 +512,7 @@ impl GitYasApp {
                     Center::Graph => ui::history::graph(ui, self),
                     Center::Diff(request) => ui::diff::view(ui, self, &request),
                     Center::Merge(path) => ui::merge::view(ui, self, &path),
+                    Center::File(origin) => ui::diff::file_tools::view(ui, self, &origin),
                 }
             }
         }

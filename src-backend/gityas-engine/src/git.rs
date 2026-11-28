@@ -10,11 +10,12 @@ use std::path::PathBuf;
 
 use gityas_core::diff::{DiffTarget, FileDiff, HunkRef};
 use gityas_core::models::{
-    AbortMergeOutcome, Branch, BranchKind, CommitBody, CommitSignature, DeletedMergeAction, Delta, FetchSummary, FileState, Head,
-    MergeConflict, MergeOutcome, PullOutcome, PushOutcome, RemoteOp, ResetMode, StashApplyOutcome, StashDetails, Worktree, WorktreeBranch,
+    AbortMergeOutcome, Branch, BranchKind, CommitBody, CommitSignature, DeletedMergeAction, Delta, FetchSummary, FileBlame,
+    FileHistoryEntry, FileState, Head, MergeConflict, MergeOutcome, PullOutcome, PushOutcome, RemoteOp, ResetMode, StashApplyOutcome,
+    StashDetails, Worktree, WorktreeBranch,
 };
 use gityas_core::{GitYasError, Oid, Result};
-use gityas_git::{branches, commits, diff, merge, refs, remote, repository, stash, worktree, worktrees};
+use gityas_git::{branches, commits, diff, history, merge, refs, remote, repository, stash, worktree, worktrees};
 
 use crate::refresh::{Refresh, refresh_blocking};
 use crate::session::SessionCtx;
@@ -43,6 +44,9 @@ const STASH_REF: Refresh = Refresh {
     stashes: true,
     ..Refresh::NONE
 };
+
+/// Most entries [`Engine::file_history`] returns.
+pub const FILE_HISTORY_MAX: usize = 1000;
 
 /// Fetch / pull: every ref list (local and remote branches, tags, stashes), whether or not the fetch moved a ref.
 const ALL_REFS: Refresh = Refresh::REMOTE_REFS.union(Refresh::LOCAL_REFS);
@@ -509,6 +513,17 @@ impl Engine {
             diff::get_file_diff(repo, &target, &file, &config)
         })
         .await
+    }
+
+    /// Commits that changed `path` (newest first, renames followed), at most `FILE_HISTORY_MAX` of them.
+    pub async fn file_history(&self, path: PathBuf) -> Result<Vec<FileHistoryEntry>> {
+        self.with_repo(move |_, _, repo| history::file_history(repo, &path, FILE_HISTORY_MAX))
+            .await
+    }
+
+    /// Line-by-line blame of `path` as `target` has it (a commit / stash, the index or the working tree).
+    pub async fn file_blame(&self, target: DiffTarget, path: PathBuf) -> Result<FileBlame> {
+        self.with_repo(move |_, _, repo| history::file_blame(repo, &target, &path)).await
     }
 
     /// Conflict contents for the merge editor; when `sides.is_text()` is false (binary, symlink, …) or a side was
